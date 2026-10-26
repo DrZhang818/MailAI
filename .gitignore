@@ -1,0 +1,20 @@
+# Build output
+build/
+
+# Local credentials and secrets
+credentials.local.*
+.env
+.env.*
+*.pem
+*.key
+
+# Local databases
+*.sqlite*
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
