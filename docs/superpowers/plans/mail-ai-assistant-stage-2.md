@@ -10,11 +10,12 @@
 
 **Spec:** [已批准的整体设计](../specs/mail-ai-assistant-design.md)，本计划细化第 3、7、8 节与第 9 节阶段 2。[阶段 1](mail-ai-assistant-stage-1.md) 已完成，代码基线为 `f4948ab`。
 
-**Status:** 用户已审阅并同意开始，Task 1 的数据目录、收信配置和列表状态传递已验证。用户已补齐 Mail 信息字段与 AttachmentInfo，Debug 构建无警告，现有 4 项 CTest 全部通过。Step 1、2 已完成；当前带写错误分类、Error.stage 和 Status，后续补同步共享类型、依赖接入和 Task 1 完整验收。沿用带写方式：导师给出业务实现参考，用户理解后写入源码；测试和 CMake 也由用户参与编写，导师讲解、审查并维护验证。用户明确委托某项后，导师直接完成该项。上方自动执行说明仅用于用户选择自动实现的情况。
+**Status:** Task 1 进行中，Step 1、2 已完成。配置、列表状态传递、Mail 字段与 expected 迁移已验证；XDG 路径修复与排序回归由用户在本机 WSL 验证并反馈测试全部通过。用户已写入 RemoteKey、MailboxSnapshot、FetchedMail，导师静态核对与参考一致；尚未做此新头文件的编译检查。当前由用户先思考同步进度、失败记录与本轮汇总的数据设计，再由导师评审并带写 SyncState、SyncFailure、SyncSummary；之后补 MIME 接口、头文件编译检查和依赖集成，再做 Task 1 完整验收。
 
 ## Global Constraints
 
 - 新文件按主题命名，不加日期前缀；专注本项目，暂停原实习计划和 CCG 记录。
+- 指导顺序按用户最新要求：导师先说明下一项任务的目标、输入输出与约束；用户自行思考并讲述方案；导师点评后再提供必要提示或代码并带着实现，最后测试验证。每轮聚焦一个小任务，等待用户讲思路期间不提前给出实现；测试默认由导师维护，用户可参与。明确委托直接实施的项目按授权执行。
 - 语言标准采用 C++23；核心库公开 `cxx_std_23`，所有项目目标设置 `CXX_STANDARD 23`、`CXX_STANDARD_REQUIRED ON`、`CXX_EXTENSIONS OFF`。
 - 一个可执行程序 `mail_assistant` 调用一个核心库 `mailai_core`；持久记录拥有自己的字符串和容器，句柄通过 RAII 管理。
 - 构建、测试和运行通过 `wsl.exe -d Ubuntu -- ...` 调用 WSL 工具。
@@ -52,6 +53,14 @@
 
 ## 命令与配置
 
+**评审跟进（用户已要求按带写方式落实）：** 保持现有架构与任务顺序，测试和文档由导师维护；业务实现先由用户讲述思路，导师评审后带写。
+
+- [x] Task 1：忽略非绝对路径的 XDG_DATA_HOME，有 HOME 时回退，无其他来源时报 config_error。已观察运行 RED，用户写入 is_absolute 判断后，在本机 WSL 运行给定构建／测试命令并反馈全部通过。
+- [x] Task 1：加强内存排序测试，使用 id=7/time=50 与原有 42/43/44，对全部 24 种输入排列断言固定期望 42/43/44/7；用户本机反馈测试全部通过。Task 2 的 SQLite 查询沿用相同排序契约。
+- [ ] Task 2：在 SqliteStore::complete 统一检查远端定位并形成持久邮件状态。真实远端键非空且 UIDVALIDITY／UID 非零；解析成功清空解析错误，解析失败保留原文、非空诊断与待重试项，并采用计划规定的失败主题和空正文。无效输入不修改已有记录或待办；样例 Mail 仍允许没有远端定位。通过真实临时 SQLite 用例验证，不新增未被业务消费的校验层。
+- [ ] Task 6：按既有 CliServices 接口解开 CLI 与整箱 vector<Mail> 的依赖；inbox 仅读取列表投影，show 才读取正文，业务错误的 stage 随诊断显示。沿用既有 CLI 回归并验证只调用所需服务。
+- [x] 文档：总体规格中的 MIME 候选统一指向本计划当前的 GMime／libxml2 选择，历史选型留在调研记录。
+
 | 命令 | 行为 |
 |---|---|
 | `mail_assistant --help` | 显示帮助，不打开数据库或连接网络 |
@@ -67,7 +76,7 @@
 
 | 变量 | 规则 |
 |---|---|
-| `MAILAI_DATA_DIR` | 可选；缺省为 `$XDG_DATA_HOME/mail-ai-assistant`，再缺省为 `$HOME/.local/share/mail-ai-assistant` |
+| `MAILAI_DATA_DIR` | 可选；缺省为 `$XDG_DATA_HOME/mail-ai-assistant`，再缺省为 `$HOME/.local/share/mail-ai-assistant`；XDG_DATA_HOME 为相对路径时忽略该来源 |
 | `MAILAI_ACCOUNT_ID`、`MAILAI_ACCOUNT_NAME` | 可选，缺省 `school`、`学校邮箱` |
 | `MAILAI_EMAIL`、`MAILAI_IMAP_HOST`、`MAILAI_IMAP_USER` | sync 必填，拒绝空值 |
 | `MAILAI_IMAP_TLS` | `implicit`（默认）或 `starttls`，均要求证书和主机名验证 |
@@ -128,7 +137,9 @@ references 暂存展开后的原始头字段字符串，原始完整邮件始终
 
 ```cpp
 using Environment = std::map<std::string, std::string>;
-using Status = Result<std::monostate>;
+template <class T>
+using Result = std::expected<T, Error>;
+using Status = Result<void>;
 
 Result<std::filesystem::path> resolve_data_dir(const Environment& env);
 Result<RuntimeConfig> parse_sync_config(const Environment& env);
@@ -207,6 +218,16 @@ Result<SyncSummary> sync_account(SqliteStore&, const Account&,
 **邮件信息字段带写进度：** 当前给用户 AttachmentInfo 和完整 Mail 值类型参考，补充文件夹、UIDVALIDITY／UID、解析错误、回复关联头及附件元数据，并按计划将 Mail.id 默认初始化为 0。保留原六个字段的顺序，新增字段均提供默认值，列表项中已验证的两个状态及其复制逻辑保持适用。当前仅补数据声明，不引入新的解析／存储行为，不为字段存在性或默认构造重复编写测试；实际字段填充与持久化在 MIME、IMAP、存储任务验证。业务头文件尚待用户写入，下一轮检查构建兼容性与全套测试。
 
 **邮件信息字段兼容性验证：** 用户已写入完整 Mail 与 AttachmentInfo。导师通过 WSL 执行 Debug 全量构建和全套 CTest，均退出 0，无编译警告，inbox、cli、config、cli_smoke 共 4/4 通过。此结果验证新增声明与现有功能兼容，不代表尚未实现的 MIME、IMAP 或持久化行为已验证。下一步给用户 ErrorCode 扩展、默认空的 Error.stage 和 Status 别名参考，待写入后复核；同步共享类型与依赖集成仍未完成，Task 1 保持进行中。
+
+**Task 1: Ruling：错误结果类型迁移。** 用户明确选择并委托统一改用 C++23 std::expected；Result<T> 从 variant<T, Error> 改为 expected<T, Error>，Status 改为 Result<void>。同步更新查询、配置、CLI 和现有测试，读取错误前检查失败状态；保留字段、错误上下文、排序、输出和退出码。顺手修正尚未使用的 protocal_error 拼写为 protocol_error。此项覆盖原阶段 1 的错误容器选择；旧计划中的 variant 示例保留为历史记录。代价是标准库必须支持 C++23 expected，且外部调用方需一起迁移。
+
+**expected 迁移验证：** 迁移前通过 WSL 全量构建及 CTest，4/4 通过；先调整既有业务测试的结果访问方式，构建因旧 variant 缺少 value／has_value／error 接口而退出 1，此为编译期接口检查，不记作运行断言 RED。随后迁移生产接口及所有调用方，Debug 全量构建与全套 CTest 均退出 0，无警告，inbox、cli、config、cli_smoke 共 4/4 通过。测试仍验证真实配置与查询行为，不新增仅验证标准库或类型别名的测试；Task 1 的同步共享类型、依赖集成与整体验收仍待完成。
+
+**XDG 相对路径 RED：** 导师新增 test_relative_xdg_data_home_is_ignored：相对 XDG_DATA_HOME 与绝对 HOME 同时存在时应回退 HOME，移除 HOME 后应返回 config_error。通过 WSL 构建退出 0、无警告；全套 CTest 退出 8，config 在 `relative XDG_DATA_HOME should be ignored in favor of HOME` 断言失败，其余 3 项通过。根因是 config.cpp 的 XDG 分支只检查非空并直接返回拼接结果；移除 HOME 后的后半组断言尚未执行。当前提供 path::is_absolute 判断的参考，生产修复待用户写入；不记为已修复。
+
+**评审改进待验证：** 用户已在 XDG 分支构造 filesystem::path 并只在 is_absolute() 时返回，静态核对与参考一致。导师新增 test_inbox_order_is_independent_of_input，用固定期望 42/43/44/7 检查四封邮件的 24 种输入排列；其中 id=7 的邮件时间为 50，避免只按 ID 排序也通过。该测试尚未编译或运行，不声称已验证全部排列或测试已通过。首次 WSL 构建／全套测试请求在执行前因自动审批超时被拒绝，按工具提示重试一次仍超时；普通沙箱尝试同一 WSL 命令退出 1，报 UtilBindVsockAnyPort socket failed。没有再次升级重试，没有改用宿主环境执行项目代码。待用户本机 WSL 验证或运行权限恢复后，先运行完整构建与全套 CTest；上述两项勾选保持未完成。
+
+**评审改进本机验收：** 用户随后反馈按给定 WSL 构建／全套 CTest 命令运行，测试全部通过，据此完成上方 XDG 与排序两项。验证来源为用户本机反馈，导师未取得完整输出，不追加具体退出码、警告或耗时结论。下一步提供 RemoteKey、MailboxSnapshot、FetchedMail 的头文件参考，供用户写入，纯值类型的有效性由后续收信与存储入口及其业务测试验证。
 
 - [x] **Step 1：带写配置测试，用户参与。** `test_valid_sync_config` 断言默认 school、端口 993、凭据引用 MAILAI_IMAP_PASSWORD；`test_starttls_default_port` 断言 143；`test_data_dir_precedence` 依次检查显式目录、XDG、HOME；`test_invalid_config` 覆盖空主机、缺用户名、未知 TLS、端口 0/65536/-1/993x；在 inbox 测试加入 `test_inbox_preserves_message_state`，断言列表保留邮件的 failed／historical 状态。输入均为虚构数据，不修改真实环境变量。
 - [x] **Step 2：先建立声明与最小可链接空壳，运行 config 测试。** 有效配置用例先断言结果为 RuntimeConfig，再取值；观察因未实现而失败。缺头文件／链接错误只记录为接口检查，不记作运行断言失败。

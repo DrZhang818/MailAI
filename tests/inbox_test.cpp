@@ -1,11 +1,12 @@
 #include "mailai/inbox.h"
 #include "test_support.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <limits>
-#include <variant>
 #include <vector>
 
 namespace {
@@ -28,9 +29,7 @@ const std::vector<Mail> mails{
 
 void test_inbox_order()
 {
-    const auto all = std::get<std::vector<InboxItem>>(
-        list_inbox(accounts, mails, InboxQuery{})
-    );
+    const auto all = list_inbox(accounts, mails, InboxQuery{}).value();
 
     expect(all.size() == 3, "all count");
     expect(all[0].id == 42 && all[1].id == 43 && all[2].id == 44,
@@ -49,12 +48,36 @@ void test_inbox_order()
 
 void test_account_filter()
 {
-    const auto school = std::get<std::vector<InboxItem>>(
-        list_inbox(accounts, mails, InboxQuery{AccountId{"school"}})
-    );
+    const auto school = list_inbox(
+        accounts, mails, InboxQuery{AccountId{"school"}}
+    ).value();
 
     expect(school.size() == 2, "school count");
     expect(school[0].id == 42 && school[1].id == 44, "account filter");
+}
+
+void test_inbox_order_is_independent_of_input()
+{
+    auto input = mails;
+    input.push_back(Mail{
+        7, "school", "older@school.example",
+        "Older message", "Older body", 50
+    });
+
+    std::array order{0, 1, 2, 3};
+    do {
+        std::vector<Mail> permuted;
+        for (const auto index : order) {
+            permuted.push_back(input[index]);
+        }
+
+        const auto result = list_inbox(accounts, permuted, InboxQuery{});
+        expect(result.has_value(), "each inbox input permutation should succeed");
+        expect(result->size() == 4, "sorting should preserve all four messages");
+        expect((*result)[0].id == 42 && (*result)[1].id == 43
+                   && (*result)[2].id == 44 && (*result)[3].id == 7,
+               "inbox should sort by descending time then ascending ID for every input permutation");
+    } while (std::next_permutation(order.begin(), order.end()));
 }
 
 void test_inbox_preserves_message_state()
@@ -66,10 +89,10 @@ void test_inbox_preserves_message_state()
     stateful_mails[2].parse_state = ParseState::failed;
 
     const auto result = list_inbox(accounts, stateful_mails, InboxQuery{});
-    expect(std::holds_alternative<std::vector<InboxItem>>(result),
+    expect(result.has_value(),
            "inbox state query should succeed");
 
-    const auto& items = std::get<std::vector<InboxItem>>(result);
+    const auto& items = *result;
     expect(items.size() == 3, "inbox state query should preserve all records");
     expect(items[0].id == 42 && items[1].id == 43 && items[2].id == 44,
            "inbox states should remain associated with stable mail IDs after sorting");
@@ -92,7 +115,7 @@ void test_inbox_preserves_message_state()
 
 void test_find_mail_by_id()
 {
-    const auto mail = std::get<Mail>(find_mail(mails, 43));
+    const auto mail = find_mail(mails, 43).value();
 
     expect(mail.id == 43, "stable mail id");
     expect(mail.account_id == "qq", "mail account");
@@ -101,14 +124,12 @@ void test_find_mail_by_id()
 
 void test_empty_inbox()
 {
-    const auto school = std::get<std::vector<InboxItem>>(
-        list_inbox(accounts, {}, InboxQuery{AccountId{"school"}})
-    );
+    const auto school = list_inbox(
+        accounts, {}, InboxQuery{AccountId{"school"}}
+    ).value();
     expect(school.empty(), "known account with no mail");
 
-    const auto all = std::get<std::vector<InboxItem>>(
-        list_inbox({}, {}, InboxQuery{})
-    );
+    const auto all = list_inbox({}, {}, InboxQuery{}).value();
     expect(all.empty(), "no accounts and no mail");
 }
 
@@ -120,7 +141,7 @@ void test_find_mail_with_uint64_max_id()
          "大 ID 邮件", "测试正文", 200}
     };
 
-    const auto mail = std::get<Mail>(find_mail(large_id_mails, large_id));
+    const auto mail = find_mail(large_id_mails, large_id).value();
 
     expect(mail.id == large_id, "uint64 max mail id");
     expect(mail.account_id == "school" && mail.subject == "大 ID 邮件",
@@ -129,16 +150,21 @@ void test_find_mail_with_uint64_max_id()
 
 void test_unknown_account()
 {
-    const auto error = std::get<Error>(
-        list_inbox(accounts, mails, InboxQuery{AccountId{"missing"}})
+    const auto result = list_inbox(
+        accounts, mails, InboxQuery{AccountId{"missing"}}
     );
+    expect(!result.has_value(), "unknown account should return an error");
+    const auto& error = result.error();
 
     expect(error.code == ErrorCode::unknown_account, "unknown account error");
     expect(error.account_id == AccountId{"missing"}, "unknown account context");
 
-    const auto empty_error = std::get<Error>(
-        list_inbox(accounts, {}, InboxQuery{AccountId{"missing"}})
+    const auto empty_result = list_inbox(
+        accounts, {}, InboxQuery{AccountId{"missing"}}
     );
+    expect(!empty_result.has_value(),
+           "unknown account with no mail should return an error");
+    const auto& empty_error = empty_result.error();
     expect(empty_error.code == ErrorCode::unknown_account,
            "unknown account with no mail");
 }
@@ -148,9 +174,10 @@ void test_mail_referencing_unknown_account()
     const std::vector<Mail> invalid_mails{
         {45, "missing", "sender@example.com", "测试邮件", "正文", 300}
     };
-    const auto error = std::get<Error>(
-        list_inbox(accounts, invalid_mails, InboxQuery{})
-    );
+    const auto result = list_inbox(accounts, invalid_mails, InboxQuery{});
+    expect(!result.has_value(),
+           "mail referencing an unknown account should return an error");
+    const auto& error = result.error();
 
     expect(error.code == ErrorCode::unknown_account,
            "mail references unknown account");
@@ -161,7 +188,9 @@ void test_mail_referencing_unknown_account()
 
 void test_mail_not_found()
 {
-    const auto error = std::get<Error>(find_mail(mails, 999));
+    const auto result = find_mail(mails, 999);
+    expect(!result.has_value(), "missing mail should return an error");
+    const auto& error = result.error();
 
     expect(error.code == ErrorCode::mail_not_found, "mail not found error");
     expect(error.mail_id == MailId{999}, "missing mail context");
@@ -169,7 +198,9 @@ void test_mail_not_found()
 
 void test_invalid_mail_id()
 {
-    const auto error = std::get<Error>(find_mail(mails, 0));
+    const auto result = find_mail(mails, 0);
+    expect(!result.has_value(), "invalid mail ID should return an error");
+    const auto& error = result.error();
 
     expect(error.code == ErrorCode::invalid_argument, "invalid mail id");
 }
@@ -180,6 +211,7 @@ int main()
 {
     try {
         test_inbox_order();
+        test_inbox_order_is_independent_of_input();
         test_account_filter();
         test_inbox_preserves_message_state();
         test_find_mail_by_id();

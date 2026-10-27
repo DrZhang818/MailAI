@@ -32,11 +32,13 @@
 
 依赖方向：CLI → 业务服务 → 邮件／AI／存储。业务入口返回数据或带上下文的错误，CLI 负责显示。未来前端通过适配层调用相同入口。
 
+统一使用 `Result<T> = std::expected<T, Error>` 表达业务结果；不返回数据的操作使用 `Status = Result<void>`。失败通过 `std::unexpected(Error{...})` 返回，调用方检查结果状态后访问值或错误。此项由用户在阶段 2 明确选择并委托迁移。
+
 先用普通函数和具体类型，随功能增加文件。工程使用 CMake、CTest 和 WSL Ubuntu；构建与运行通过 `wsl.exe -d Ubuntu -- ...` 调用 WSL 工具。
 
 语言标准采用 C++23；核心库公开 `cxx_std_23` 编译要求。所有项目目标设置 `CXX_STANDARD 23`、`CXX_STANDARD_REQUIRED ON`、`CXX_EXTENSIONS OFF`。CMake 最低版本为 3.20，标准设置依据 [CMake 官方文档](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html)。
 
-网络候选为 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)。MIME 候选为 [mailio](https://github.com/karastojko/mailio)，在中文、HTML、multipart 与字符集样本通过后固定选型和版本。SQLite 保存本地数据。候选依赖尚未完成集成验证。
+网络候选为 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)。MIME 与 HTML 的当前候选分别为 GMime、libxml2，选型与依赖要求统一见[阶段 2 计划](../plans/mail-ai-assistant-stage-2.md)。在中文、HTML、multipart 与字符集样本通过后记录实际验证的版本。SQLite 保存本地数据。候选依赖尚未完成集成验证。
 
 ## 3. 数据、账号与同步
 
@@ -173,7 +175,7 @@
 | 6 一键批量回复 | 明确集合、意图、归并、直接发送、部分失败与取消 | 一条命令完成指定范围，恢复规则通过 |
 | 7 终端交付 | help／JSON／退出码、配置与依赖说明、回归、完整演示 | 干净构建可复现收信、汇报与两种回复 |
 
-详细实现计划按阶段由 writing-plans 编写，并指导用户实现。[阶段 1 实现计划](../plans/mail-ai-assistant-stage-1.md) 已完成，Debug／Release 各 3 项 CTest 全部通过，CLI 覆盖 31 次调用，代码截至 f4948ab。[阶段 2 实现计划](../plans/mail-ai-assistant-stage-2.md) 已获用户同意，正在带写 Task 1 的配置测试；MIME 候选采用 GMime，尚未安装或完成样本集成验证。
+详细实现计划按阶段由 writing-plans 编写，并指导用户实现。[阶段 1 实现计划](../plans/mail-ai-assistant-stage-1.md) 已完成，Debug／Release 各 3 项 CTest 全部通过，CLI 覆盖 31 次调用，代码截至 f4948ab。[阶段 2 实现计划](../plans/mail-ai-assistant-stage-2.md) 已获用户同意，当前执行 Task 1；具体进度、依赖选择和验证记录统一以该计划为准。
 
 ## 10. 调研依据
 

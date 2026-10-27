@@ -26,12 +26,12 @@ Result<std::vector<InboxItem>> list_inbox(
             accounts, *query.account_id, &Account::id
         );
         if(account == accounts.end()) {
-            return Error{
+            return std::unexpected(Error{
                 ErrorCode::unknown_account,
                 "账号不存在",
                 query.account_id,
                 std::nullopt
-            };
+            });
         }
     }
 
@@ -45,12 +45,12 @@ Result<std::vector<InboxItem>> list_inbox(
             accounts, mail.account_id, &Account::id
         );
         if(account == accounts.end()) {
-            return Error{
+            return std::unexpected(Error{
                 ErrorCode::unknown_account,
                 "邮件所属账号不存在",
                 mail.account_id,
                 mail.id
-            };
+            });
         }
         items.push_back(InboxItem{
             mail.id,
@@ -77,23 +77,23 @@ Result<std::vector<InboxItem>> list_inbox(
 
 Result<Mail> find_mail(const std::vector<Mail>& mails, MailId id) {
     if(id == 0) {
-        return Error{
+        return std::unexpected(Error{
             ErrorCode::invalid_argument,
             "邮件 ID 必须大于 0",
             std::nullopt,
             id
-        };
+        });
     }
 
     const auto mail = std::ranges::find(mails, id, &Mail::id);
 
     if(mail == mails.end()) {
-        return Error{
+        return std::unexpected(Error{
             ErrorCode::mail_not_found,
             "邮件不存在",
             std::nullopt,
             id
-        };
+        });
     }
 
     return *mail;

@@ -6,7 +6,6 @@
 #include <ostream>
 #include <string_view>
 #include <system_error>
-#include <variant>
 
 namespace mailai::cli {
 
@@ -81,11 +80,11 @@ int run_cli(
 
         const auto result = list_inbox(accounts, mails, query);
 
-        if(const auto* error = std::get_if<Error>(&result)) {
-            return query_error(*error, err);
+        if(!result) {
+            return query_error(result.error(), err);
         }
 
-        const auto& items = std::get<std::vector<InboxItem>>(result);
+        const auto& items = *result;
 
         out << "数据来源：示例\n"
                "ID\t账号\t发件人\t主题\n";
@@ -118,11 +117,11 @@ int run_cli(
 
     const auto result = find_mail(mails, id);
 
-    if(const auto* error = std::get_if<Error>(&result)) {
-        return query_error(*error, err);
+    if(!result) {
+        return query_error(result.error(), err);
     }
 
-    const auto& mail = std::get<Mail>(result);
+    const auto& mail = *result;
 
     out << "数据来源：示例\n"
         << "ID: " << mail.id << "\n"

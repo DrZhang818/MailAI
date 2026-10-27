@@ -2,7 +2,6 @@
 #include "test_support.h"
 
 #include <filesystem>
-#include <variant>
 
 namespace {
 
@@ -24,11 +23,11 @@ void test_valid_sync_config()
     const auto result = parse_sync_config(env);
 
     expect(
-        std::holds_alternative<RuntimeConfig>(result),
+        result.has_value(),
         "valid sync config should be accepted"
     );
 
-    const auto& config = std::get<RuntimeConfig>(result);
+    const auto& config = *result;
 
     expect(config.account.id == "school", "default account ID should be school");
     expect(config.account.display_name == "学校邮箱",
@@ -54,10 +53,10 @@ void test_starttls_default_port()
     env["MAILAI_IMAP_TLS"] = "starttls";
 
     const auto result = parse_sync_config(env);
-    expect(std::holds_alternative<RuntimeConfig>(result),
+    expect(result.has_value(),
            "STARTTLS sync config should be accepted");
 
-    const auto& config = std::get<RuntimeConfig>(result);
+    const auto& config = *result;
     expect(config.imap.tls_mode == TlsMode::starttls,
            "STARTTLS mode should be preserved");
     expect(config.imap.port == 143, "STARTTLS should default to port 143");
@@ -73,10 +72,10 @@ void test_custom_sync_config()
     env["MAILAI_IMAP_PORT"] = "1143";
 
     const auto result = parse_sync_config(env);
-    expect(std::holds_alternative<RuntimeConfig>(result),
+    expect(result.has_value(),
            "custom sync config should be accepted without a password value");
 
-    const auto& config = std::get<RuntimeConfig>(result);
+    const auto& config = *result;
     expect(config.account.id == "campus", "explicit account ID should be preserved");
     expect(config.account.display_name == "个人学校邮箱",
            "explicit account name should be preserved");
@@ -103,9 +102,9 @@ void test_explicit_port_boundaries()
         env["MAILAI_IMAP_PORT"] = test.text;
 
         const auto result = parse_sync_config(env);
-        expect(std::holds_alternative<RuntimeConfig>(result),
+        expect(result.has_value(),
                "a port within the valid range should be accepted");
-        expect(std::get<RuntimeConfig>(result).imap.port == test.expected,
+        expect(result->imap.port == test.expected,
                "explicit boundary port should be preserved without narrowing errors");
     }
 }
@@ -145,8 +144,8 @@ void test_invalid_config()
         }
 
         const auto result = parse_sync_config(env);
-        expect(std::holds_alternative<Error>(result), test.message);
-        const auto& error = std::get<Error>(result);
+        expect(!result.has_value(), test.message);
+        const auto& error = result.error();
         expect(error.code == ErrorCode::config_error,
                "invalid sync config should report config_error");
         expect(!error.message.empty(), "config errors should include a diagnostic");
@@ -158,9 +157,31 @@ void test_missing_data_dir_sources()
     const auto result = resolve_data_dir(Environment{});
 
     expect(
-        std::holds_alternative<Error>(result),
+        !result.has_value(),
         "missing data directory sources should return an error"
     );
+}
+
+void test_relative_xdg_data_home_is_ignored()
+{
+    Environment env{
+        {"XDG_DATA_HOME", "relative-data"},
+        {"HOME", "/tmp/mailai-test/home"}
+    };
+
+    auto result = resolve_data_dir(env);
+    expect(result.has_value(),
+           "relative XDG_DATA_HOME should not prevent the HOME fallback");
+    expect(*result == std::filesystem::path{
+               "/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
+           "relative XDG_DATA_HOME should be ignored in favor of HOME");
+
+    env.erase("HOME");
+    result = resolve_data_dir(env);
+    expect(!result.has_value(),
+           "relative XDG_DATA_HOME alone should not resolve a data directory");
+    expect(result.error().code == ErrorCode::config_error,
+           "no usable data directory source should report config_error");
 }
 
 void test_data_dir_precedence() {
@@ -173,12 +194,12 @@ void test_data_dir_precedence() {
     auto result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<std::filesystem::path>(result),
+        result.has_value(),
         "explicit data directory should be accepted"
     );
 
     expect(
-        std::get<std::filesystem::path>(result)
+        *result
             == std::filesystem::path{"/tmp/mailai-test/custom"},
         "explicit data directory should take precedence"
     );
@@ -187,12 +208,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<std::filesystem::path>(result),
+        result.has_value(),
         "XDG data directory should be accepted when no explicit directory is set"
     );
 
     expect(
-        std::get<std::filesystem::path>(result)
+        *result
             == std::filesystem::path{"/tmp/mailai-test/xdg/mail-ai-assistant"},
         "data directory should be mail-ai-assistant under XDG_DATA_HOME"
     );
@@ -201,12 +222,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<std::filesystem::path>(result),
+        result.has_value(),
         "HOME fallback should be accepted when no explicit or XDG directory is set"
     );
 
     expect(
-        std::get<std::filesystem::path>(result)
+        *result
             == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
         "data directory should be .local/share/mail-ai-assistant under HOME"
     );
@@ -215,12 +236,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<Error>(result),
+        !result.has_value(),
         "missing data directory sources should return an error"
     );
 
     expect(
-        std::get<Error>(result).code == ErrorCode::config_error,
+        result.error().code == ErrorCode::config_error,
         "missing data directory sources should report config_error"
     );
 
@@ -232,12 +253,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<std::filesystem::path>(result),
+        result.has_value(),
         "empty explicit directory should fall back to XDG"
     );
 
     expect(
-        std::get<std::filesystem::path>(result)
+        *result
             == std::filesystem::path{"/tmp/mailai-test/xdg/mail-ai-assistant"},
         "XDG data directory should be used when the explicit directory is empty"
     );
@@ -246,12 +267,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<std::filesystem::path>(result),
+        result.has_value(),
         "empty explicit and XDG directories should fall back to HOME"
     );
 
     expect(
-        std::get<std::filesystem::path>(result)
+        *result
             == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
         "HOME default data directory should be used when explicit and XDG directories are empty"
     );
@@ -260,12 +281,12 @@ void test_data_dir_precedence() {
     result = resolve_data_dir(env);
 
     expect(
-        std::holds_alternative<Error>(result),
+        !result.has_value(),
         "empty data directory sources should return an error"
     );
 
     expect(
-        std::get<Error>(result).code == ErrorCode::config_error,
+        result.error().code == ErrorCode::config_error,
         "empty data directory sources should report config_error"
     );
 }
@@ -275,6 +296,7 @@ void test_data_dir_precedence() {
 int main() {
     test_missing_data_dir_sources();
     test_data_dir_precedence();
+    test_relative_xdg_data_home_is_ignored();
     test_valid_sync_config();
     test_starttls_default_port();
     test_custom_sync_config();

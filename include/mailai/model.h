@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace mailai {
@@ -35,7 +35,7 @@ struct Mail {
     std::string subject;
     std::string body;
     std::int64_t received_at_utc{};
-    
+
     std::string folder{};
     std::uint32_t uid_validity{};
     std::uint32_t uid{};
@@ -54,7 +54,14 @@ enum class ErrorCode {
     unknown_account,
     mail_not_found,
     invalid_argument,
-    config_error
+    config_error,
+    auth_error,
+    network_error,
+    protocol_error,
+    remote_gone,
+    parse_error,
+    storage_error,
+    busy
 };
 
 struct Error {
@@ -62,9 +69,11 @@ struct Error {
     std::string message;
     std::optional<AccountId> account_id;
     std::optional<MailId> mail_id;
+    std::string stage{};
 };
 
 template <class T>
-using Result = std::variant<T, Error>;
+using Result = std::expected<T, Error>;
 
+using Status = Result<void>;
 } // namespace mailai

@@ -14,7 +14,9 @@
 
 ## 构建与测试
 
-需要 WSL Ubuntu、支持 C++23 的 GCC、CMake 3.20+ 和 Ninja。
+需要 WSL Ubuntu、支持 C++23 的 GCC 及提供 `std::expected` 的标准库、CMake 3.20+ 和 Ninja。
+
+核心接口统一使用 `Result<T> = std::expected<T, Error>` 返回业务结果；不返回数据的操作使用 `Status = Result<void>`。
 
 从 Windows 终端执行：
 
@@ -26,7 +28,7 @@ wsl.exe -d Ubuntu -- cmake --build /mnt/d/programme/gitcode/实习准备/project
 wsl.exe -d Ubuntu -- ctest --test-dir /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug --output-on-failure
 ```
 
-CTest 包含 `inbox`（核心查询）、`cli`（参数、展示与错误处理）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+CTest 包含 `inbox`（核心查询）、`cli`（参数、展示与错误处理）、`config`（阶段 2 的环境变量配置解析）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
 
 ## 使用
 
