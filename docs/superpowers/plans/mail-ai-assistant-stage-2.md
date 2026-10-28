@@ -10,7 +10,7 @@
 
 **Spec:** [已批准的整体设计](../specs/mail-ai-assistant-design.md)，本计划细化第 3、7、8 节与第 9 节阶段 2。[阶段 1](mail-ai-assistant-stage-1.md) 已完成，代码基线为 `f4948ab`。
 
-**Status:** Task 1 进行中，Step 1、2 已完成。配置、列表状态传递、Mail 字段与 expected 迁移已验证；XDG 路径修复与排序回归由用户在本机 WSL 验证并反馈测试全部通过。用户已写入 RemoteKey、MailboxSnapshot、FetchedMail，导师静态核对与参考一致；尚未做此新头文件的编译检查。当前由用户先思考同步进度、失败记录与本轮汇总的数据设计，再由导师评审并带写 SyncState、SyncFailure、SyncSummary；之后补 MIME 接口、头文件编译检查和依赖集成，再做 Task 1 完整验收。
+**Status:** Task 1 进行中，Step 1、2 已完成。用户已纠正 parse_message 拼写；sync_types.h、mime.h 已通过独立翻译单元的 C++23 语法检查，解析函数声明调用也通过编译检查。WSL Debug 构建无警告，现有 4 项 CTest 全部通过，包括 XDG 修复与排序回归。下一项按带写节奏逐库接入依赖，先让用户思考 SQLite 开发依赖与 CMake 接入方案；当前 pkg-config 未找到 sqlite3。其余依赖及 Task 1 完整验收尚待完成；解析函数实现属于 Task 3。
 
 ## Global Constraints
 
@@ -228,6 +228,8 @@ Result<SyncSummary> sync_account(SqliteStore&, const Account&,
 **评审改进待验证：** 用户已在 XDG 分支构造 filesystem::path 并只在 is_absolute() 时返回，静态核对与参考一致。导师新增 test_inbox_order_is_independent_of_input，用固定期望 42/43/44/7 检查四封邮件的 24 种输入排列；其中 id=7 的邮件时间为 50，避免只按 ID 排序也通过。该测试尚未编译或运行，不声称已验证全部排列或测试已通过。首次 WSL 构建／全套测试请求在执行前因自动审批超时被拒绝，按工具提示重试一次仍超时；普通沙箱尝试同一 WSL 命令退出 1，报 UtilBindVsockAnyPort socket failed。没有再次升级重试，没有改用宿主环境执行项目代码。待用户本机 WSL 验证或运行权限恢复后，先运行完整构建与全套 CTest；上述两项勾选保持未完成。
 
 **评审改进本机验收：** 用户随后反馈按给定 WSL 构建／全套 CTest 命令运行，测试全部通过，据此完成上方 XDG 与排序两项。验证来源为用户本机反馈，导师未取得完整输出，不追加具体退出码、警告或耗时结论。下一步提供 RemoteKey、MailboxSnapshot、FetchedMail 的头文件参考，供用户写入，纯值类型的有效性由后续收信与存储入口及其业务测试验证。
+
+**共享类型与接口验证：** 用户已完成六个同步值类型、ParsedMail 和 parse_message 声明。导师在 build/debug 放置临时编译探针：分别单独包含 sync_types.h、mime.h，并在后者中检查按既定名称调用解析接口可返回 Result<ParsedMail>。通过 WSL 使用 c++ -std=c++23 -Wall -Wextra -Wpedantic -fsyntax-only 检查两个翻译单元，再构建 Debug 并运行全套 CTest，串联命令退出 0，无警告，4/4 通过。此检查验证声明及现有功能，不链接或执行尚未实现的解析函数。随后只读执行 pkg-config --modversion sqlite3，退出 1，提示未找到 sqlite3.pc；尚未安装依赖或修改其 CMake 配置。先以 SQLite 完成一轮依赖带写，再处理其余库，Step 3／4 保持未完成。
 
 - [x] **Step 1：带写配置测试，用户参与。** `test_valid_sync_config` 断言默认 school、端口 993、凭据引用 MAILAI_IMAP_PASSWORD；`test_starttls_default_port` 断言 143；`test_data_dir_precedence` 依次检查显式目录、XDG、HOME；`test_invalid_config` 覆盖空主机、缺用户名、未知 TLS、端口 0/65536/-1/993x；在 inbox 测试加入 `test_inbox_preserves_message_state`，断言列表保留邮件的 failed／historical 状态。输入均为虚构数据，不修改真实环境变量。
 - [x] **Step 2：先建立声明与最小可链接空壳，运行 config 测试。** 有效配置用例先断言结果为 RuntimeConfig，再取值；观察因未实现而失败。缺头文件／链接错误只记录为接口检查，不记作运行断言失败。
