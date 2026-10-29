@@ -16,6 +16,7 @@ find_package(LibXml2 2.9 REQUIRED)
 add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
+    src/store/sqlite_store.cpp
 )
 
 target_link_libraries(mailai_core PRIVATE
