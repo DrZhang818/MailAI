@@ -25,10 +25,10 @@ int argument_error(std::ostream& err, std::string_view message) {
 
 int query_error(const Error& error, std::ostream& err) {
     err << error.message;
-    if(error.account_id) {
+    if (error.account_id) {
         err << " [account=" << *error.account_id << ']';
     }
-    if(error.mail_id) {
+    if (error.mail_id) {
         err << " [mail=" << *error.mail_id << ']';
     }
     err << '\n';
@@ -44,43 +44,41 @@ int run_cli(
     std::ostream& out,
     std::ostream& err
 ) {
-    if(args.empty() || (args.size() == 1 && args[0] == "--help")) {
+    if (args.empty() || (args.size() == 1 && args[0] == "--help")) {
         print_help(out);
         return 0;
     }
 
     const auto& command = args[0];
 
-    if(command != "inbox" && command != "show") {
+    if (command != "inbox" && command != "show") {
         return argument_error(err, "未知命令，请使用 --help 查看用法");
     }
 
-    if(args.size() == 2 && args[1] == "--help") {
+    if (args.size() == 2 && args[1] == "--help") {
         print_help(out);
         return 0;
     }
 
-    if(command == "inbox") {
+    if (command == "inbox") {
         InboxQuery query{};
 
-        if(args.size() != 1) {
-            if(args.size() != 3 || args[1] != "--account") {
-                return argument_error(
-                    err, "用法: inbox [--account <id|all>]"
-                );
+        if (args.size() != 1) {
+            if (args.size() != 3 || args[1] != "--account") {
+                return argument_error(err, "用法: inbox [--account <id|all>]");
             }
             const auto& account_id = args[2];
-            if(account_id.empty() || account_id.starts_with("--")) {
+            if (account_id.empty() || account_id.starts_with("--")) {
                 return argument_error(err, "--account 后需要账号 ID 或 all");
             }
-            if(account_id != "all") {
+            if (account_id != "all") {
                 query.account_id = account_id;
             }
         }
 
         const auto result = list_inbox(accounts, mails, query);
 
-        if(!result) {
+        if (!result) {
             return query_error(result.error(), err);
         }
 
@@ -89,10 +87,8 @@ int run_cli(
         out << "数据来源：示例\n"
                "ID\t账号\t发件人\t主题\n";
 
-        for(const auto& item : items) {
-            out << item.id << '\t'
-                << item.account_name << '\t'
-                << item.sender << '\t'
+        for (const auto& item : items) {
+            out << item.id << '\t' << item.account_name << '\t' << item.sender << '\t'
                 << item.subject << '\n';
         }
 
@@ -101,7 +97,7 @@ int run_cli(
     }
 
     // 剩下的命令是 show
-    if(args.size() != 2) {
+    if (args.size() != 2) {
         return argument_error(err, "用法: show <mail-id>");
     }
 
@@ -111,13 +107,13 @@ int run_cli(
 
     const auto [ptr, ec] = std::from_chars(begin, end, id, 10);
 
-    if(ec != std::errc{} || ptr != end || id == 0) {
+    if (ec != std::errc{} || ptr != end || id == 0) {
         return argument_error(err, "邮件 ID 必须是范围内的十进制整数");
     }
 
     const auto result = find_mail(mails, id);
 
-    if(!result) {
+    if (!result) {
         return query_error(result.error(), err);
     }
 
@@ -128,7 +124,8 @@ int run_cli(
         << "账号: " << mail.account_id << "\n"
         << "发件人: " << mail.sender << "\n"
         << "主题: " << mail.subject << "\n"
-        << "正文:\n" << mail.body << "\n";
+        << "正文:\n"
+        << mail.body << "\n";
 
     return 0;
 }

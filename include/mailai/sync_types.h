@@ -2,11 +2,11 @@
 
 #include "mailai/model.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
-#include <cstddef>
 
 namespace mailai {
 

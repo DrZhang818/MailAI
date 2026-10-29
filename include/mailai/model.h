@@ -17,10 +17,7 @@ struct Account {
     std::string address;
 };
 
-enum class ParseState {
-    parsed,
-    failed
-};
+enum class ParseState { parsed, failed };
 
 struct AttachmentInfo {
     std::string name;
@@ -72,8 +69,7 @@ struct Error {
     std::string stage{};
 };
 
-template <class T>
-using Result = std::expected<T, Error>;
+template <class T> using Result = std::expected<T, Error>;
 
 using Status = Result<void>;
 

@@ -13,10 +13,7 @@ namespace mailai {
 
 using Environment = std::map<std::string, std::string>;
 
-enum class TlsMode {
-    implicit,
-    starttls
-};
+enum class TlsMode { implicit, starttls };
 
 struct ImapSettings {
     std::string host;

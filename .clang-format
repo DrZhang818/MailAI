@@ -1,0 +1,15 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AlignAfterOpenBracket: BlockIndent
+BinPackArguments: false
+AllowAllArgumentsOnNextLine: false
+BinPackParameters: OnePerLine
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+BreakConstructorInitializers: BeforeColon
+DerivePointerAlignment: false
+PointerAlignment: Left

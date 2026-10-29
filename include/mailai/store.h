@@ -8,15 +8,12 @@ struct sqlite3;
 
 namespace mailai {
 
-enum class OpenMode {
-    read_only,
-    read_write_create
-};
+enum class OpenMode { read_only, read_write_create };
 
 class SqliteStore {
-public:
+  public:
     static Result<SqliteStore> open(const std::filesystem::path& path, OpenMode mode);
-    
+
     ~SqliteStore();
 
     SqliteStore(const SqliteStore&) = delete;
@@ -25,7 +22,7 @@ public:
     SqliteStore(SqliteStore&& other) noexcept;
     SqliteStore& operator=(SqliteStore&& other) noexcept;
 
-private:
+  private:
     explicit SqliteStore(sqlite3* db) noexcept;
 
     sqlite3* db_{nullptr};
