@@ -2,7 +2,7 @@
 
 #include "mailai/model.h"
 
-#include <string> 
+#include <string>
 #include <string_view>
 #include <vector>
 

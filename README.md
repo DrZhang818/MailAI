@@ -4,6 +4,8 @@
 
 当前完成阶段 1：使用内存中的虚构邮件运行终端程序。
 
+阶段 2 已准备好环境变量配置解析、共享数据类型和基础依赖；终端仍使用示例数据，收信与数据库读写将在后续任务实现。
+
 - 列出全部邮件或按账号筛选。
 - 按接收时间降序、同时间 ID 升序排列。
 - 按稳定邮件 ID 查找详情。
@@ -17,6 +19,15 @@
 需要 WSL Ubuntu、支持 C++23 的 GCC 及提供 `std::expected` 的标准库、CMake 3.20+ 和 Ninja。
 
 核心接口统一使用 `Result<T> = std::expected<T, Error>` 返回业务结果；不返回数据的操作使用 `Status = Result<void>`。
+
+先在 WSL Ubuntu 中安装开发依赖：
+
+```bash
+sudo apt update
+sudo apt install pkg-config libsqlite3-dev libcurl4-openssl-dev libgmime-3.0-dev libxml2-dev python3 openssl
+```
+
+库的最低版本和实际验证结果见[依赖记录](docs/dependencies.md)。
 
 从 Windows 终端执行：
 

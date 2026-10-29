@@ -73,14 +73,14 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     RuntimeConfig config;
 
     config.data_dir = *directory;
-    
-    config.account.id = 
+
+    config.account.id =
         config_value(env, "MAILAI_ACCOUNT_ID", "school");
-    
-    config.account.display_name = 
+
+    config.account.display_name =
         config_value(env, "MAILAI_ACCOUNT_NAME", "学校邮箱");
-    
-    config.account.address = 
+
+    config.account.address =
         config_value(env, "MAILAI_EMAIL");
 
     config.imap.host =
@@ -89,12 +89,12 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     config.imap.username =
         config_value(env, "MAILAI_IMAP_USER");
 
-    config.imap.credential_env = 
+    config.imap.credential_env =
         config_value(env, "MAILAI_PASSWORD_ENV", "MAILAI_IMAP_PASSWORD");
 
-    auto tls = 
+    auto tls =
         config_value(env, "MAILAI_IMAP_TLS", "implicit");
-    
+
     if(tls == "starttls") {
         config.imap.tls_mode = TlsMode::starttls;
         config.imap.port = 143;
@@ -104,7 +104,7 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
         ));
     }
 
-    const auto port_text = 
+    const auto port_text =
         config_value(env, "MAILAI_IMAP_PORT");
 
     if(!port_text.empty()) {

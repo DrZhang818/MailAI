@@ -76,4 +76,5 @@ template <class T>
 using Result = std::expected<T, Error>;
 
 using Status = Result<void>;
+
 } // namespace mailai

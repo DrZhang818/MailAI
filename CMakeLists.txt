@@ -2,10 +2,27 @@ cmake_minimum_required(VERSION 3.20)
 
 project(mail_ai_assistant LANGUAGES CXX)
 
+find_package(SQLite3 3.37 REQUIRED)
+
+find_package(CURL 8.0 REQUIRED)
+
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET "gmime-3.0>=3.2")
+
+find_package(LibXml2 2.9 REQUIRED)
+
 # Core library and its public requirements.
 add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
+)
+
+target_link_libraries(mailai_core PRIVATE
+    SQLite::SQLite3
+    CURL::libcurl
+    PkgConfig::GMIME
+    LibXml2::LibXml2
 )
 
 target_include_directories(mailai_core PUBLIC
@@ -33,12 +50,17 @@ add_executable(config_test
     tests/config_test.cpp
 )
 
+add_executable(store_test
+    tests/store_test.cpp
+)
+
 # Executables consume the core library's public requirements.
 foreach(mailai_target IN ITEMS
     mail_assistant
     inbox_test
     cli_test
     config_test
+    store_test
 )
     target_link_libraries(${mailai_target} PRIVATE mailai_core)
 endforeach()
@@ -56,6 +78,7 @@ foreach(mailai_target IN ITEMS
     inbox_test
     cli_test
     config_test
+    store_test
 )
     set_target_properties(${mailai_target} PROPERTIES
         CXX_STANDARD 23
@@ -74,6 +97,7 @@ enable_testing()
 add_test(NAME inbox COMMAND inbox_test)
 add_test(NAME cli COMMAND cli_test)
 add_test(NAME config COMMAND config_test)
+add_test(NAME store COMMAND store_test)
 
 add_test(NAME cli_smoke
     COMMAND "${CMAKE_COMMAND}"

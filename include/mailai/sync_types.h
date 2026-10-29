@@ -37,7 +37,7 @@ struct SyncState {
 
 struct SyncFailure {
     RemoteKey key;
-    Error error;  
+    Error error;
 };
 
 struct SyncSummary {

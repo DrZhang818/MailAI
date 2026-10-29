@@ -2,7 +2,7 @@
 
 日期：2026-10-19。流程：Superpowers brainstorming，架构级设计。
 
-状态：用户已回复“通过”，本书面规格已批准。阶段 1 的核心查询与示例 CLI 已验收；真实邮件依赖集成、邮箱连接和模型调用尚未验证。
+状态：用户已回复“通过”，本书面规格已批准。阶段 1 的核心查询与示例 CLI 已验收，阶段 2 的配置、共享类型和基础依赖接入已验证；真实邮箱连接、数据库读写和模型调用尚未实现或验证。
 
 项目协作约定：新文件按主题命名，不加日期前缀；当前专注本项目，暂停维护原实习计划和 CCG 学习记录。
 
@@ -10,7 +10,7 @@
 
 用 C++23 开发个人使用的本地终端工具，同时连接 QQ 与学校邮箱，自动整理邮件、汇报重要内容与待办，并辅助回复。普通回复生成可编辑草稿；一键回复对明确选中的邮件直接生成并发送。
 
-已确认的选择：独立子命令、可选前台 `watch`、云端模型 API、`report` 默认更新后汇报，以及模块化 CLI＋核心库＋SQLite。测试、测试辅助与验证由导师维护；从阶段 2 起用户也参与测试编写。业务实现由导师在终端给出完整参考和必要解释，用户理解后抄入源码。导师检查实际代码并验证，不把参考代码的提供记为用户已独立实现。
+已确认的选择：独立子命令、可选前台 `watch`、云端模型 API、`report` 默认更新后汇报，以及模块化 CLI＋核心库＋SQLite。测试、测试辅助与验证由导师维护，用户可参与。业务任务先由导师说明目标、输入输出与约束，用户思考并讲述方案，导师点评后再带写实现、检查代码并验证；用户明确要求示范或直接实施时按授权执行，不把参考代码的提供记为用户已独立实现。
 
 首个完整版本包含多账号、中文邮件解析、三种汇报、隐藏与恢复、用户规则、草稿发送、一键批量回复和状态恢复。按第 9 节逐阶段实现，以验收推进。
 
@@ -38,7 +38,7 @@
 
 语言标准采用 C++23；核心库公开 `cxx_std_23` 编译要求。所有项目目标设置 `CXX_STANDARD 23`、`CXX_STANDARD_REQUIRED ON`、`CXX_EXTENSIONS OFF`。CMake 最低版本为 3.20，标准设置依据 [CMake 官方文档](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html)。
 
-网络候选为 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)。MIME 与 HTML 的当前候选分别为 GMime、libxml2，选型与依赖要求统一见[阶段 2 计划](../plans/mail-ai-assistant-stage-2.md)。在中文、HTML、multipart 与字符集样本通过后记录实际验证的版本。SQLite 保存本地数据。候选依赖尚未完成集成验证。
+网络采用 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，MIME 与 HTML 分别采用 GMime、libxml2，SQLite 保存本地数据；基础接入已验证，实际版本和验证范围见[依赖记录](../../dependencies.md)。邮件及 HTML 样本和真实收信由后续任务验收，依赖要求见[阶段 2 计划](../plans/mail-ai-assistant-stage-2.md)。JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)，尚未接入。
 
 ## 3. 数据、账号与同步
 
