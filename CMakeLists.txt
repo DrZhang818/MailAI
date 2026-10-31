@@ -55,6 +55,8 @@ add_executable(store_test
     tests/store_test.cpp
 )
 
+target_link_libraries(store_test PRIVATE SQLite::SQLite3)
+
 # Executables consume the core library's public requirements.
 foreach(mailai_target IN ITEMS
     mail_assistant

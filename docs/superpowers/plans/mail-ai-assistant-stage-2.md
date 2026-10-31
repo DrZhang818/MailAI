@@ -10,7 +10,7 @@
 
 **Spec:** [已批准的整体设计](../specs/mail-ai-assistant-design.md)，本计划细化第 3、7、8 节与第 9 节阶段 2。[阶段 1](mail-ai-assistant-stage-1.md) 已完成，代码基线为 `f4948ab`。
 
-**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：连接管理已实现，Debug 构建无警告，现有 5 项 CTest 全部通过；下一步建立数据库表。阶段 2 尚未验收。
+**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：基础账号配置存储已实现，Debug 构建无警告，5 项 CTest 全部通过；数据库版本管理和同步状态待实现。阶段 2 尚未验收。
 
 ## Global Constraints
 

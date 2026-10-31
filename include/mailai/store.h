@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mailai/config.h"
 #include "mailai/model.h"
 
 #include <filesystem>
@@ -21,6 +22,8 @@ class SqliteStore {
 
     SqliteStore(SqliteStore&& other) noexcept;
     SqliteStore& operator=(SqliteStore&& other) noexcept;
+
+    Status ensure_account(const Account& account, const ImapSettings& imap);
 
   private:
     explicit SqliteStore(sqlite3* db) noexcept;
