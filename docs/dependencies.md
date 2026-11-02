@@ -1,10 +1,20 @@
 # Dependencies
 
-依赖在 WSL Ubuntu 中使用系统开发包获取。完整选型和版本下限见[阶段 2 计划](superpowers/plans/mail-ai-assistant-stage-2.md)；此文件记录实际接入结果。
+当前开发平台为 macOS。完整选型和版本下限见[阶段 2 计划](superpowers/plans/mail-ai-assistant-stage-2.md)。
+
+## macOS 本机验证
+
+macOS 27.2（Apple Silicon）、Apple Clang 21.0.0、CMake 4.4.5、Ninja 1.13.2、pkg-config 3.0.10；CMake 选用 Homebrew SQLite 3.54.1、libcurl 8.23.0、GMime 3.2.15、libxml2 2.15.4 和 libffi 3.8.0。Homebrew curl 的版本信息列出 IMAP、IMAPS 和 SSL；此检查不连接服务器。Python 3.14.10 和 OpenSSL 命令行 4.1.0 已安装。
+
+按 README 的 macOS 命令构建 `build/macos-debug`（Debug）和新的 `build/verify-sqlite-release`（Release），两种模式各 5 项 CTest 全部通过，构建无警告。`store` 使用真实临时 SQLite 验证完整版本 1 初始化、已知旧账号库迁移、结构差异拒绝、事务失败恢复、外键、WAL 和写锁争用；邮件缓存业务接口仍待实现。使用本机系统版本作为部署目标；当前命令行工具的 SDK 为 26.5，程序未验证对较旧 macOS 的兼容性。邮件解析和真实收信仍由后续任务验收。
+
+## 此前 WSL Ubuntu 验证
+
+下表与后文保留此前 WSL Ubuntu 的实测记录，不能视为 macOS 的版本数据。
 
 | 依赖 | 用途 | 开发包 | 最低版本 | 实测版本 | CMake 目标 | 接入状态 |
 |---|---|---|---|---|---|---|
-| SQLite | 本地邮件与同步状态存储 | `libsqlite3-dev` | 3.37 | 3.46.1 | `SQLite::SQLite3` | 已接入 |
+| SQLite | 本地邮件与同步状态存储 | `libsqlite3-dev` | 3.37 | 3.46.1 | `SQLite3::SQLite3` | 已接入 |
 | libcurl | 邮箱服务器通信 | `libcurl4-openssl-dev` | 8.0 | 8.18.0 | `CURL::libcurl` | 已接入，协议能力已检查 |
 | GMime | 邮件原文解析 | `libgmime-3.0-dev` | 3.2 | 3.2.15 | `PkgConfig::GMIME` | 已接入 |
 | libxml2 | HTML 正文解析 | `libxml2-dev` | 2.9 | 2.15.2 | `LibXml2::LibXml2` | 已接入 |

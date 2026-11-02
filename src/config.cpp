@@ -7,8 +7,8 @@ namespace mailai {
 
 namespace {
 
-std::string
-config_value(const Environment& env, const std::string& name, const std::string& fallback = {}) {
+std::string config_value(const Environment& env, const std::string& name,
+                         const std::string& fallback = {}) {
     const auto it = env.find(name);
     if (it != env.end() && !it->second.empty()) {
         return it->second;
@@ -25,7 +25,7 @@ Error make_config_error(const std::string& message) {
     };
 }
 
-} // namespace
+}  // namespace
 
 Result<std::filesystem::path> resolve_data_dir(const Environment& env) {
     if (const auto it = env.find("MAILAI_DATA_DIR"); it != env.end() && !it->second.empty()) {
@@ -40,22 +40,15 @@ Result<std::filesystem::path> resolve_data_dir(const Environment& env) {
     if (const auto it = env.find("HOME"); it != env.end() && !it->second.empty()) {
         return std::filesystem::path(it->second) / ".local" / "share" / "mail-ai-assistant";
     }
-    return std::unexpected(
-        Error{
-            ErrorCode::config_error,
-            "Cannot determine data directory",
-            std::nullopt,
-            std::nullopt
-        }
-    );
+    return std::unexpected(Error{ErrorCode::config_error, "Cannot determine data directory",
+                                 std::nullopt, std::nullopt});
 }
 
 Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     for (const char* name : {"MAILAI_EMAIL", "MAILAI_IMAP_HOST", "MAILAI_IMAP_USER"}) {
         if (config_value(env, name).empty()) {
             return std::unexpected(
-                make_config_error("Missing required setting: " + std::string(name))
-            );
+                make_config_error("Missing required setting: " + std::string(name)));
         }
     }
 
@@ -101,8 +94,7 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
         const auto [ptr, ec] = std::from_chars(begin, end, port);
         if (ec != std::errc{} || ptr != end || port == 0 || port > 65535) {
             return std::unexpected(
-                make_config_error("MAILAI_IMAP_PORT must be a decimal integer from 1 to 65535")
-            );
+                make_config_error("MAILAI_IMAP_PORT must be a decimal integer from 1 to 65535"));
         }
 
         config.imap.port = static_cast<std::uint16_t>(port);
@@ -111,4 +103,4 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     return config;
 }
 
-} // namespace mailai
+}  // namespace mailai

@@ -4,7 +4,7 @@
 
 当前完成阶段 1：使用内存中的虚构邮件运行终端程序。
 
-阶段 2 已准备好环境变量配置解析、共享数据类型和基础依赖；终端仍使用示例数据，收信与数据库读写将在后续任务实现。
+阶段 2 已实现环境变量配置、共享类型、基础依赖及 SQLite 数据库生命周期：五表版本 1 初始化、旧账号库迁移、结构校验和失败回滚。终端仍使用示例数据；邮件缓存业务读写和真实收信将在后续任务实现。
 
 - 列出全部邮件或按账号筛选。
 - 按接收时间降序、同时间 ID 升序排列。
@@ -16,41 +16,41 @@
 
 ## 构建与测试
 
-需要 WSL Ubuntu、支持 C++23 的 GCC 及提供 `std::expected` 的标准库、CMake 3.20+ 和 Ninja。
+需要 macOS、支持 C++23 和 `std::expected` 的编译器及标准库、CMake 3.20+、Ninja，以及 SQLite、libcurl、GMime、libxml2 和 pkg-config。
 
 核心接口统一使用 `Result<T> = std::expected<T, Error>` 返回业务结果；不返回数据的操作使用 `Status = Result<void>`。
 
-先在 WSL Ubuntu 中安装开发依赖：
-
-```bash
-sudo apt update
-sudo apt install pkg-config libsqlite3-dev libcurl4-openssl-dev libgmime-3.0-dev libxml2-dev python3 openssl
-```
-
 库的最低版本和实际验证结果见[依赖记录](docs/dependencies.md)。
 
-从 Windows 终端执行：
+使用 Homebrew 安装依赖（CMake 和 Apple 命令行开发工具须已安装）：
 
-```powershell
-wsl.exe -d Ubuntu -- cmake -S /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant -B /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-
-wsl.exe -d Ubuntu -- cmake --build /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug
-
-wsl.exe -d Ubuntu -- ctest --test-dir /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug --output-on-failure
+```sh
+brew install ninja pkgconf sqlite curl gmime libxml2 libffi
 ```
 
-CTest 包含 `inbox`（核心查询）、`cli`（参数、展示与错误处理）、`config`（阶段 2 的环境变量配置解析）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+在项目根目录的 macOS 终端执行：
+
+```sh
+cmake -S . -B build/macos-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion)" \
+  "-DCMAKE_PREFIX_PATH=$(brew --prefix libffi);$(brew --prefix sqlite);$(brew --prefix curl);$(brew --prefix libxml2);$(brew --prefix)"
+cmake --build build/macos-debug
+ctest --test-dir build/macos-debug --output-on-failure
+```
+
+命令将最低运行系统版本设为当前 macOS 版本，并显式选用 Homebrew 的库；生成的程序不保证可在较旧的 macOS 上运行。
+
+CTest 包含 `inbox`（核心查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+
+数据库生命周期由核心库的 `SqliteStore::open` 提供，尚未接入 CLI。读写打开会初始化或迁移到版本 1，并启用外键和文件数据库 WAL；只读打开仅接受结构匹配的版本 1。已有版本 0 的账号库需要先以读写模式迁移。结构校验只兼容本项目已知的 DDL，手工改写的等价 SQL 也可能被拒绝；具体契约见[生命周期设计](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)。
 
 ## 使用
 
-```powershell
-wsl.exe -d Ubuntu -- /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug/mail_assistant --help
-
-wsl.exe -d Ubuntu -- /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug/mail_assistant inbox
-
-wsl.exe -d Ubuntu -- /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug/mail_assistant inbox --account school
-
-wsl.exe -d Ubuntu -- /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug/mail_assistant show 43
+```sh
+./build/macos-debug/mail_assistant --help
+./build/macos-debug/mail_assistant inbox
+./build/macos-debug/mail_assistant inbox --account school
+./build/macos-debug/mail_assistant show 43
 ```
 
 `inbox --account all` 与 `inbox` 含义相同。`show` 使用邮件自身的 ID，不使用列表行号。ID 为十进制正整数，最大值为 `18446744073709551615`；ID 合法但查无邮件时返回运行失败。
@@ -67,10 +67,10 @@ wsl.exe -d Ubuntu -- /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assi
 
 ## Release 验证
 
-```powershell
-wsl.exe -d Ubuntu -- cmake -S /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant -B /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/verify-stage1-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-wsl.exe -d Ubuntu -- cmake --build /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/verify-stage1-release
-
-wsl.exe -d Ubuntu -- ctest --test-dir /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/verify-stage1-release --output-on-failure
+```sh
+cmake -S . -B build/verify-stage1-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion)" \
+  "-DCMAKE_PREFIX_PATH=$(brew --prefix libffi);$(brew --prefix sqlite);$(brew --prefix curl);$(brew --prefix libxml2);$(brew --prefix)"
+cmake --build build/verify-stage1-release
+ctest --test-dir build/verify-stage1-release --output-on-failure
 ```

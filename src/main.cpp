@@ -1,22 +1,20 @@
-#include "cli.h"
-
 #include <exception>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#include "cli.h"
+
 int main(int argc, char* argv[]) {
     try {
         const std::vector<mailai::Account> accounts{
             {"school", "学校邮箱", "student@school.example"},
-            {"qq", "QQ邮箱", "student@qq.example"}
-        };
+            {"qq", "QQ邮箱", "student@qq.example"}};
 
         const std::vector<mailai::Mail> mails{
             {44, "school", "library@school.example", "图书馆通知", "请按时归还图书", 100},
             {43, "qq", "recruiter@example.com", "实习通知", "请确认面试时间", 200},
-            {42, "school", "course@school.example", "课程通知", "请查看课程安排", 200}
-        };
+            {42, "school", "course@school.example", "课程通知", "请查看课程安排", 200}};
 
         std::vector<std::string> args;
 

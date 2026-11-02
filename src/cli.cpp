@@ -1,11 +1,11 @@
 #include "cli.h"
 
-#include "mailai/inbox.h"
-
 #include <charconv>
 #include <ostream>
 #include <string_view>
 #include <system_error>
+
+#include "mailai/inbox.h"
 
 namespace mailai::cli {
 
@@ -35,15 +35,10 @@ int query_error(const Error& error, std::ostream& err) {
     return 1;
 }
 
-} // namespace
+}  // namespace
 
-int run_cli(
-    const std::vector<std::string>& args,
-    const std::vector<Account>& accounts,
-    const std::vector<Mail>& mails,
-    std::ostream& out,
-    std::ostream& err
-) {
+int run_cli(const std::vector<std::string>& args, const std::vector<Account>& accounts,
+            const std::vector<Mail>& mails, std::ostream& out, std::ostream& err) {
     if (args.empty() || (args.size() == 1 && args[0] == "--help")) {
         print_help(out);
         return 0;
@@ -130,4 +125,4 @@ int run_cli(
     return 0;
 }
 
-} // namespace mailai::cli
+}  // namespace mailai::cli

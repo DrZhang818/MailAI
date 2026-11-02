@@ -1,13 +1,13 @@
 #pragma once
 
-#include "mailai/model.h"
-
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
+
+#include "mailai/model.h"
 
 namespace mailai {
 
@@ -36,4 +36,4 @@ Result<std::filesystem::path> resolve_data_dir(const Environment& env);
 
 Result<RuntimeConfig> parse_sync_config(const Environment& env);
 
-} // namespace mailai
+}  // namespace mailai

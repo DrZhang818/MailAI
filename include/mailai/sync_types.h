@@ -1,12 +1,12 @@
 #pragma once
 
-#include "mailai/model.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "mailai/model.h"
 
 namespace mailai {
 
@@ -48,4 +48,4 @@ struct SyncSummary {
     std::vector<SyncFailure> failures;
 };
 
-} // namespace mailai
+}  // namespace mailai

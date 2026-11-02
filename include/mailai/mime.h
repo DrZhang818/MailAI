@@ -1,10 +1,10 @@
 #pragma once
 
-#include "mailai/model.h"
-
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "mailai/model.h"
 
 namespace mailai {
 
@@ -20,4 +20,4 @@ struct ParsedMail {
 
 Result<ParsedMail> parse_message(std::string_view raw);
 
-} // namespace mailai
+}  // namespace mailai

@@ -1,34 +1,11 @@
-#include "mailai/store.h"
-
-#include <memory>
 #include <string_view>
-
-#include <sqlite3.h>
 #include <utility>
 
+#include "mailai/store.h"
+#include "schema.h"
+#include "sqlite_utils.h"
+
 namespace mailai {
-
-namespace {
-
-Status execute_sql(sqlite3* db, const char* sql) {
-    const int rc = sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
-
-    if (rc != SQLITE_OK) {
-        return std::unexpected(
-            Error{
-                ErrorCode::storage_error,
-                sqlite3_errmsg(db),
-                std::nullopt,
-                std::nullopt,
-                "storage.sql"
-            }
-        );
-    }
-
-    return {};
-}
-
-} // namespace
 
 SqliteStore::SqliteStore(sqlite3* db) noexcept : db_(db) {}
 
@@ -47,52 +24,28 @@ SqliteStore& SqliteStore::operator=(SqliteStore&& other) noexcept {
 }
 
 Result<SqliteStore> SqliteStore::open(const std::filesystem::path& path, OpenMode mode) {
-    int flags = SQLITE_OPEN_READONLY;
-
-    if (mode == OpenMode::read_write_create) {
-        flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-    }
-
+    const int flags = mode == OpenMode::read_write_create
+                          ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+                          : SQLITE_OPEN_READONLY;
     sqlite3* db = nullptr;
     const int rc = sqlite3_open_v2(path.c_str(), &db, flags, nullptr);
-
     SqliteStore store(db);
+    if (rc != SQLITE_OK)
+        return std::unexpected(store_detail::sqlite_error(db, rc, "storage.open"));
 
-    if (rc != SQLITE_OK) {
-        return std::unexpected(
-            Error{
-                ErrorCode::storage_error,
-                db ? sqlite3_errmsg(db) : "Failed to allocate SQLite connection",
-                std::nullopt,
-                std::nullopt,
-                "storage.open"
-            }
-        );
-    }
-
+    auto configured = store_detail::configure_connection(db);
+    if (!configured)
+        return std::unexpected(configured.error());
+    auto schema = store_detail::ensure_schema(db, mode);
+    if (!schema)
+        return std::unexpected(schema.error());
     if (mode == OpenMode::read_write_create) {
-        constexpr const char* sql = R"sql(
-            CREATE TABLE IF NOT EXISTS accounts (
-                id TEXT PRIMARY KEY NOT NULL,
-                display_name TEXT NOT NULL,
-                address TEXT NOT NULL,
-                imap_host TEXT NOT NULL,
-                imap_port INTEGER NOT NULL,
-                imap_username TEXT NOT NULL,
-                credential_env TEXT NOT NULL,
-                tls_mode TEXT NOT NULL
-            );
-        )sql";
-
-        const auto status = execute_sql(db, sql);
-
-        if (!status) {
-            return std::unexpected(status.error());
-        }
+        auto wal = store_detail::configure_wal(db);
+        if (!wal)
+            return std::unexpected(wal.error());
     }
-
     return store;
-};
+}
 
 Status SqliteStore::ensure_account(const Account& account, const ImapSettings& imap) {
     const auto fail = [&](ErrorCode code, const char* message) -> Status {
@@ -123,47 +76,42 @@ Status SqliteStore::ensure_account(const Account& account, const ImapSettings& i
           AND accounts.imap_username = excluded.imap_username;
     )sql";
 
-    sqlite3_stmt* raw_statement = nullptr;
-    const int prepare_rc = sqlite3_prepare_v2(db_, sql, -1, &raw_statement, nullptr);
-    const std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> statement{
-        raw_statement,
-        &sqlite3_finalize
-    };
-    if (prepare_rc != SQLITE_OK) {
-        return fail(ErrorCode::storage_error, sqlite3_errmsg(db_));
+    auto prepared = store_detail::prepare(db_, sql, "storage.account");
+    if (!prepared) {
+        auto error = prepared.error();
+        error.account_id = account.id;
+        return std::unexpected(std::move(error));
     }
+    auto statement = std::move(*prepared);
 
     const std::string_view tls = imap.tls_mode == TlsMode::implicit ? "implicit" : "starttls";
     const std::pair<int, std::string_view> fields[]{
-        {1, account.id},
-        {2, account.display_name},
-        {3, account.address},
-        {4, imap.host},
-        {6, imap.username},
-        {7, imap.credential_env},
-        {8, tls}
-    };
+        {1, account.id}, {2, account.display_name}, {3, account.address},
+        {4, imap.host},  {6, imap.username},        {7, imap.credential_env},
+        {8, tls}};
 
     for (const auto& [index, value] : fields) {
-        const int rc = sqlite3_bind_text64(
-            statement.get(),
-            index,
-            value.data(),
-            value.size(),
-            SQLITE_TRANSIENT,
-            SQLITE_UTF8
-        );
+        const int rc = sqlite3_bind_text64(statement.get(), index, value.data(), value.size(),
+                                           SQLITE_TRANSIENT, SQLITE_UTF8);
         if (rc != SQLITE_OK) {
-            return fail(ErrorCode::storage_error, sqlite3_errmsg(db_));
+            auto error = store_detail::sqlite_error(db_, rc, "storage.account");
+            error.account_id = account.id;
+            return std::unexpected(std::move(error));
         }
     }
 
-    if (sqlite3_bind_int(statement.get(), 5, imap.port) != SQLITE_OK) {
-        return fail(ErrorCode::storage_error, sqlite3_errmsg(db_));
+    const int bind_rc = sqlite3_bind_int(statement.get(), 5, imap.port);
+    if (bind_rc != SQLITE_OK) {
+        auto error = store_detail::sqlite_error(db_, bind_rc, "storage.account");
+        error.account_id = account.id;
+        return std::unexpected(std::move(error));
     }
 
-    if (sqlite3_step(statement.get()) != SQLITE_DONE) {
-        return fail(ErrorCode::storage_error, sqlite3_errmsg(db_));
+    const int step_rc = sqlite3_step(statement.get());
+    if (step_rc != SQLITE_DONE) {
+        auto error = store_detail::sqlite_error(db_, step_rc, "storage.account");
+        error.account_id = account.id;
+        return std::unexpected(std::move(error));
     }
 
     if (sqlite3_changes(db_) == 0) {
@@ -173,4 +121,4 @@ Status SqliteStore::ensure_account(const Account& account, const ImapSettings& i
     return {};
 }
 
-} // namespace mailai
+}  // namespace mailai

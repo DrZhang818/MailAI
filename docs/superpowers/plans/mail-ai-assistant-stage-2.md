@@ -6,18 +6,18 @@
 
 **Architecture:** 保留 CLI → 业务服务 → 邮件／存储的依赖方向。同步服务串行调用 IMAP、MIME 和 SQLite；查询命令只读取本地缓存。持久待处理队列记录已发现但尚未完成的 UID，防止失败邮件被同步进度越过。
 
-**Tech Stack:** C++23、CMake 3.20+、Ninja、CTest、WSL Ubuntu；libcurl 8.0+、SQLite 3.37+、GMime 3.2+、libxml2 2.9+。Python 3 与 OpenSSL 命令行只用于本机 TLS 测试服务器和测试证书。
+**Tech Stack:** C++23、CMake 3.20+、Ninja、CTest、macOS；libcurl 8.0+、SQLite 3.37+、GMime 3.2+、libxml2 2.9+。Python 3 与 OpenSSL 命令行只用于本机 TLS 测试服务器和测试证书。
 
 **Spec:** [已批准的整体设计](../specs/mail-ai-assistant-design.md)，本计划细化第 3、7、8 节与第 9 节阶段 2。[阶段 1](mail-ai-assistant-stage-1.md) 已完成，代码基线为 `f4948ab`。
 
-**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：基础账号配置存储已实现，Debug 构建无警告，5 项 CTest 全部通过；数据库版本管理和同步状态待实现。阶段 2 尚未验收。
+**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：账号配置存储及数据库生命周期已实现，完整版本 1 的初始化、旧库迁移、结构校验与事务恢复通过 macOS Debug／Release 各 5 项 CTest；邮件缓存业务接口、同步队列推进和数据目录写锁仍未实现。阶段 2 尚未验收。
 
 ## Global Constraints
 
-- 按用户要求先说明下一项任务的目标、输入输出、约束和验收条件；用户先讲方案，导师点评后再给提示或参考代码，最后带写和验证。每轮聚焦一个小任务。
+- 按用户要求先明确整体设计和接口，再说明下一项工程步骤的目标、输入输出、约束和验收条件；用户先讲方案，导师点评后再给提示或参考代码，最后带写和验证。每轮交付一个职责完整、可独立验收的工程步骤。
 - 测试、测试夹具和验证默认由导师维护，用户可参与；只有用户明确委托时才直接修改业务源码。
 - 使用 C++23；核心库公开 `cxx_std_23`，所有项目目标设置 `CXX_STANDARD 23`、`CXX_STANDARD_REQUIRED ON`、`CXX_EXTENSIONS OFF`。
-- 构建、测试和运行通过 `wsl.exe -d Ubuntu -- ...` 调用 WSL 工具。
+- 构建、测试和运行在 macOS 本机执行；工具链和依赖须先实际验证。
 - 一个可执行程序 `mail_assistant` 调用一个核心库 `mailai_core`；持久记录拥有自己的字符串和容器，句柄通过 RAII 管理。
 - 首个接入对象为学校邮箱，默认账号 ID 为 `school`。主机、端口和用户名按本人设置页填写，不硬编码未实测的服务器参数。
 - 凭据值只放在本地环境变量，数据库只保存凭据引用，日志排除凭据。使用学校客户端专用密码，用户无需把密码发到对话中。
@@ -40,7 +40,7 @@
 |---|---|
 | 数据来源 | 默认读取真实本地缓存；阶段 1 样例只在显式 `--demo` 时使用 |
 | MIME | GMime 负责 MIME 和字符集转换，libxml2 负责 HTML 转文本 |
-| 依赖 | 使用 WSL 系统开发包和已固定的最低版本；实际版本记录在 `docs/dependencies.md` |
+| 依赖 | 使用满足固定最低版本的 macOS 开发包；实际版本记录在 `docs/dependencies.md` |
 | 首次同步 | 注册最近 20 个 UID；更早邮件本阶段不回填 |
 | 增量方式 | 扫描 UID 列表并在本地筛选；只下载新 UID 和待重试项，先保证正确性 |
 | 正文取舍 | `multipart/alternative` 优先 `text/plain`，缺失时将 `text/html` 转文本 |
@@ -82,6 +82,7 @@
 | `include/mailai/config.h`、`src/config.cpp` | 数据目录与连接参数校验 | 1 |
 | `include/mailai/sync_types.h`、`include/mailai/mime.h` | 服务器定位、同步值和解析值类型 | 1 |
 | `include/mailai/store.h`、`src/store/sqlite_store.cpp` | SQLite schema、查询、事务和待处理项 | 2 |
+| `src/store/schema.h/.cpp`、`src/store/sqlite_utils.h/.cpp` | 版本结构定义、迁移与校验、连接配置和事务 RAII | 2 |
 | `include/mailai/data_dir_lock.h`、`src/store/data_dir_lock.cpp` | 单数据目录写进程锁 | 2 |
 | `src/mail/mime.cpp`、`src/mail/html_text.h`、`src/mail/html_text.cpp` | MIME、字符集和 HTML 正文提取 | 3 |
 | `include/mailai/imap.h`、`src/mail/imap.cpp` | libcurl IMAP 适配、TLS、超时和重试 | 4 |
@@ -187,6 +188,8 @@ Result<SyncSummary> sync_account(SqliteStore&, const Account&,
 
 ## Task 2: SQLite 缓存与可靠写入
 
+数据库生命周期已按[已批准设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)和[生命周期实施计划](mail-ai-assistant-sqlite-lifecycle.md)交付；这部分覆盖 schema、打开和迁移，不代表本任务的邮件读写及同步状态已完成。
+
 **Files:** `include/mailai/store.h`、`src/store/sqlite_store.cpp`、`include/mailai/data_dir_lock.h`、`src/store/data_dir_lock.cpp`、`tests/store_test.cpp`；必要时扩展 `tests/inbox_test.cpp`。
 
 **Interfaces:** 消费 Task 1 的类型；产出 `SqliteStore` 和 `DataDirLock`，供同步与 CLI 装配调用。
@@ -195,7 +198,7 @@ Result<SyncSummary> sync_account(SqliteStore&, const Account&,
 
 - [ ] 编写真实临时数据库测试：重开后内容和 ID 保留；相同 `RemoteKey` 重试 ID 不变；已知空账号成功、未知账号报错；写入失败不丢已有邮件或 pending；排序固定为 `42,43,44,7`，其中 `id=7/time=50` 防止仅按 ID 排序也通过。
 - [ ] 运行 `store`，确认实现缺失时因具体行为断言失败；检查实际行数、查询内容和待处理项，不只检查“打开成功”。
-- [ ] 建立 schema：`accounts`、`sync_state`、`sync_pending`、`messages`、`attachments`；`user_version=1`，外键开启，文件数据库使用 WAL，短事务和参数绑定；不支持或损坏的版本返回错误，禁止删除后重建。
+- [x] 建立 schema：`accounts`、`sync_state`、`sync_pending`、`messages`、`attachments`；`user_version=1`，外键开启，文件数据库使用 WAL，短事务和参数绑定；不支持或损坏的版本返回错误，禁止删除后重建。
 - [ ] 实现查询与写入：本地 ID 为 `INTEGER PRIMARY KEY AUTOINCREMENT`，远端唯一键为 `(account_id,folder,uid_validity,uid)`；禁止用 REPLACE 破坏已有 ID；原文存 BLOB，正文和头字段存 TEXT。
 - [ ] 实现同步状态：`schedule` 在同一事务注册 pending 和发现进度；`complete` 在同一事务保存邮件／附件，只有解析成功才移除待办；`fail` 保存抓取原因，`remote_gone` 标记为不可重试；UIDVALIDITY 改变时旧邮件标记历史、旧队列失效。
 - [ ] 在 `complete` 统一校验远端定位与解析状态：账号、文件夹非空且 UIDVALIDITY／UID 非零；成功解析清空 `parse_error`，失败解析保存原文、非空诊断和待重试项，并使用约定失败主题与空正文；无效输入不修改已有记录或待办。阶段 1 样例 `Mail` 可以没有远端定位。
@@ -323,7 +326,7 @@ CliServices make_local_services(Environment env, SecretLookup read_secret);
 
 **Steps:**
 
-- [ ] 用户在本机 WSL 按学校说明生成客户端专用密码并设置环境变量；真实验收目录使用项目 `build/live-data` 或其他不入 Git 的路径。
+- [ ] 用户在本机 macOS 按学校说明生成客户端专用密码并设置环境变量；真实验收目录使用项目 `build/live-data` 或其他不入 Git 的路径。
 - [ ] 维护独立 `live_mailbox_test` 目标，复用真实存储、网络和同步入口；只在 `MAILAI_LIVE_TESTS=1` 时运行，不注册默认 CTest，使用独立 `build/live-probe` 目录和 `SyncOptions{5}`。
 - [ ] 执行 sync → inbox → show → 重启 → 再次 inbox／show → 重复 sync，确认可读中文、稳定 ID、无重复行；移除本机密码后离线查看仍可用。
 - [ ] 在邮箱界面复核读取前后已读状态；端点或认证失败时记录实际错误，不把离线测试当作真实接入成功。
@@ -341,10 +344,12 @@ CliServices make_local_services(Environment env, SecretLookup read_secret);
 
 每个任务只接入自己的目标；执行以下命令，预期配置、构建和全部已接入 CTest 均退出 0，无编译警告。测试失败时先定位原因，不跳过失败项。
 
-```powershell
-wsl.exe -d Ubuntu -- cmake -S /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant -B /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-wsl.exe -d Ubuntu -- cmake --build /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug
-wsl.exe -d Ubuntu -- ctest --test-dir /mnt/d/programme/gitcode/实习准备/projects/mail-ai-assistant/build/debug --output-on-failure
+```sh
+cmake -S . -B build/macos-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion)" \
+  "-DCMAKE_PREFIX_PATH=$(brew --prefix libffi);$(brew --prefix sqlite);$(brew --prefix curl);$(brew --prefix libxml2);$(brew --prefix)"
+cmake --build build/macos-debug
+ctest --test-dir build/macos-debug --output-on-failure
 ```
 
 阶段结束时使用新的 `build/verify-stage2-release` 目录，将构建类型替换为 `Release` 后重复以上步骤。若目录已存在，使用新的无日期名称并保留已有产物。

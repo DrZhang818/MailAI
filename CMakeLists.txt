@@ -4,6 +4,10 @@ project(mail_ai_assistant LANGUAGES CXX)
 
 find_package(SQLite3 3.37 REQUIRED)
 
+if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+endif()
+
 find_package(CURL 8.0 REQUIRED)
 
 find_package(PkgConfig REQUIRED)
@@ -17,10 +21,12 @@ add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
     src/store/sqlite_store.cpp
+    src/store/sqlite_utils.cpp
+    src/store/schema.cpp
 )
 
 target_link_libraries(mailai_core PRIVATE
-    SQLite::SQLite3
+    SQLite3::SQLite3
     CURL::libcurl
     PkgConfig::GMIME
     LibXml2::LibXml2
@@ -55,7 +61,11 @@ add_executable(store_test
     tests/store_test.cpp
 )
 
-target_link_libraries(store_test PRIVATE SQLite::SQLite3)
+target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
+target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_definitions(store_test PRIVATE
+    MAILAI_LEGACY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/store/legacy_accounts.sql"
+)
 
 # Executables consume the core library's public requirements.
 foreach(mailai_target IN ITEMS

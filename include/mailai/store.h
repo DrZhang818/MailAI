@@ -1,9 +1,9 @@
 #pragma once
 
+#include <filesystem>
+
 #include "mailai/config.h"
 #include "mailai/model.h"
-
-#include <filesystem>
 
 struct sqlite3;
 
@@ -12,7 +12,7 @@ namespace mailai {
 enum class OpenMode { read_only, read_write_create };
 
 class SqliteStore {
-  public:
+public:
     static Result<SqliteStore> open(const std::filesystem::path& path, OpenMode mode);
 
     ~SqliteStore();
@@ -25,10 +25,10 @@ class SqliteStore {
 
     Status ensure_account(const Account& account, const ImapSettings& imap);
 
-  private:
+private:
     explicit SqliteStore(sqlite3* db) noexcept;
 
     sqlite3* db_{nullptr};
 };
 
-} // namespace mailai
+}  // namespace mailai
