@@ -61,6 +61,35 @@ void test_initialize_and_reopen() {
            "reopen should preserve schema and accounts");
 }
 
+void test_original_version_one_reopens() {
+    constexpr const char* original_accounts_sql = R"sql(CREATE TABLE accounts (
+                id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                address TEXT NOT NULL,
+                imap_host TEXT NOT NULL,
+                imap_port INTEGER NOT NULL,
+                imap_username TEXT NOT NULL,
+                credential_env TEXT NOT NULL,
+                tls_mode TEXT NOT NULL
+            );)sql";
+    TempDirectory directory;
+    const auto path = directory.path() / "original-version-one.sqlite3";
+    initialize(path);
+    Database db(path);
+    db.execute("DROP TABLE accounts");
+    db.execute(original_accounts_sql);
+    insert_account(db);
+    const auto before = db.catalog();
+    const auto accounts = db.rows("SELECT * FROM accounts");
+    for (auto mode : modes) {
+        expect(SqliteStore::open(path, mode).has_value(),
+               "original version 1 should reopen in both modes");
+        expect(db.catalog() == before && db.rows("SELECT * FROM accounts") == accounts &&
+                   db.integer("PRAGMA user_version") == 1,
+               "reopening must preserve the schema, account values and version");
+    }
+}
+
 void test_empty_and_missing_paths() {
     TempDirectory directory;
     const auto path = directory.path() / "empty.sqlite3";
@@ -494,6 +523,7 @@ void test_corrupt_schema() {
 int main() {
     const std::pair<const char*, void (*)()> tests[]{
         {"initialize_and_reopen", test_initialize_and_reopen},
+        {"original_version_one_reopens", test_original_version_one_reopens},
         {"empty_and_missing_paths", test_empty_and_missing_paths},
         {"unversioned_account_database_is_preserved",
          test_unversioned_account_database_is_preserved},

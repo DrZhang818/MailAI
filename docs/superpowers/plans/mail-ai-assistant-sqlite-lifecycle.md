@@ -12,12 +12,12 @@
 
 **Spec:** [生命周期设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)，隶属[阶段 2](mail-ai-assistant-stage-2.md) Task 2。用户已明确授权按修订后的打开策略直接实施。
 
-**Status:** 已完成本次单版本收敛。macOS Debug／Release 各 5 项 CTest 全部通过；账号 DDL 随后的缩进调整会导致旧格式版本 1 被拒绝，原结构和数据保留，兼容策略尚待确定。Task 2 的邮件业务接口、同步队列和进程锁仍未实现。
+**Status:** 已完成本次单版本收敛，账号 DDL 已恢复最初的版本 1 缩进。使用提交 `d0c9410` 创建的数据库采用另一种缩进，当前会被拒绝打开，原结构和数据保留；Task 2 的邮件业务接口、同步队列和进程锁仍未实现。
 
 ## Global Constraints
 
 - 在当前共享工作区实施，不回退用户修改，不自动暂存、提交或推送。
-- 公共 `SqliteStore::open(path, OpenMode)` 和 `ensure_account` 接口不变；账号 DDL 缩进调整后的兼容性限制见规格第 4.1 节。
+- 公共 `SqliteStore::open(path, OpenMode)` 和 `ensure_account` 接口不变；账号 DDL 缩进及其兼容性限制见规格第 4.1 节。
 - 版本 0 是未初始化状态；仅空库可以初始化，非空一律拒绝且保留数据；只读模式不初始化。
 - `schema_version=1`；不支持的版本和结构返回 `storage_error`，错误阶段为 `storage.schema`；初始化执行错误阶段为 `storage.initialize`。
 - 版本设置与建表在同一事务内；保留外键、1000ms busy timeout、WAL 和失败回滚契约，具体行为见规格。

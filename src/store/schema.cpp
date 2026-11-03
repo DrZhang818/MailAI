@@ -11,17 +11,18 @@
 
 namespace mailai::store_detail {
 namespace {
+// Preserve version 1 SQL text: SQLite stores its internal whitespace.
 constexpr std::array version_one_sql{
     R"sql(CREATE TABLE accounts (
-        id TEXT PRIMARY KEY NOT NULL,
-        display_name TEXT NOT NULL,
-        address TEXT NOT NULL,
-        imap_host TEXT NOT NULL,
-        imap_port INTEGER NOT NULL,
-        imap_username TEXT NOT NULL,
-        credential_env TEXT NOT NULL,
-        tls_mode TEXT NOT NULL
-    );)sql",
+                id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                address TEXT NOT NULL,
+                imap_host TEXT NOT NULL,
+                imap_port INTEGER NOT NULL,
+                imap_username TEXT NOT NULL,
+                credential_env TEXT NOT NULL,
+                tls_mode TEXT NOT NULL
+            );)sql",
     R"sql(CREATE TABLE sync_state (
         account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
         folder TEXT NOT NULL CHECK(length(folder)>0),
