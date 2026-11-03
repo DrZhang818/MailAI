@@ -10,7 +10,7 @@
 
 **Spec:** [已批准的整体设计](../specs/mail-ai-assistant-design.md)，本计划细化第 3、7、8 节与第 9 节阶段 2。[阶段 1](mail-ai-assistant-stage-1.md) 已完成，代码基线为 `f4948ab`。
 
-**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：账号配置存储及数据库生命周期已实现，完整版本 1 的初始化、旧库迁移、结构校验与事务恢复通过 macOS Debug／Release 各 5 项 CTest；邮件缓存业务接口、同步队列推进和数据目录写锁仍未实现。阶段 2 尚未验收。
+**Status:** Task 1 已完成并提交为 `874e0a6`。Task 2 进行中：账号配置存储及数据库生命周期已实现，完整版本 1 的初始化、非空版本 0 拒绝、结构校验与事务恢复通过 macOS Debug／Release 各 5 项 CTest；邮件缓存业务接口、同步队列推进和数据目录写锁仍未实现。阶段 2 尚未验收。
 
 ## Global Constraints
 
@@ -82,7 +82,7 @@
 | `include/mailai/config.h`、`src/config.cpp` | 数据目录与连接参数校验 | 1 |
 | `include/mailai/sync_types.h`、`include/mailai/mime.h` | 服务器定位、同步值和解析值类型 | 1 |
 | `include/mailai/store.h`、`src/store/sqlite_store.cpp` | SQLite schema、查询、事务和待处理项 | 2 |
-| `src/store/schema.h/.cpp`、`src/store/sqlite_utils.h/.cpp` | 版本结构定义、迁移与校验、连接配置和事务 RAII | 2 |
+| `src/store/schema.h/.cpp`、`src/store/sqlite_utils.h/.cpp` | 版本结构定义、初始化与校验、连接配置和事务 RAII | 2 |
 | `include/mailai/data_dir_lock.h`、`src/store/data_dir_lock.cpp` | 单数据目录写进程锁 | 2 |
 | `src/mail/mime.cpp`、`src/mail/html_text.h`、`src/mail/html_text.cpp` | MIME、字符集和 HTML 正文提取 | 3 |
 | `include/mailai/imap.h`、`src/mail/imap.cpp` | libcurl IMAP 适配、TLS、超时和重试 | 4 |
@@ -188,7 +188,7 @@ Result<SyncSummary> sync_account(SqliteStore&, const Account&,
 
 ## Task 2: SQLite 缓存与可靠写入
 
-数据库生命周期已按[已批准设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)和[生命周期实施计划](mail-ai-assistant-sqlite-lifecycle.md)交付；这部分覆盖 schema、打开和迁移，不代表本任务的邮件读写及同步状态已完成。
+数据库生命周期已按[已批准设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)和[生命周期实施计划](mail-ai-assistant-sqlite-lifecycle.md)交付；这部分覆盖 schema、空库初始化、打开和未知数据库保护，不代表本任务的邮件读写及同步状态已完成。
 
 **Files:** `include/mailai/store.h`、`src/store/sqlite_store.cpp`、`include/mailai/data_dir_lock.h`、`src/store/data_dir_lock.cpp`、`tests/store_test.cpp`；必要时扩展 `tests/inbox_test.cpp`。
 

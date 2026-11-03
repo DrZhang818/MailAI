@@ -11,21 +11,17 @@
 
 namespace mailai::store_detail {
 namespace {
-// Preserve the deployed c0c537b definition, including its stored SQL layout.
-constexpr const char* accounts_sql = R"sql(CREATE TABLE accounts (
-                id TEXT PRIMARY KEY NOT NULL,
-                display_name TEXT NOT NULL,
-                address TEXT NOT NULL,
-                imap_host TEXT NOT NULL,
-                imap_port INTEGER NOT NULL,
-                imap_username TEXT NOT NULL,
-                credential_env TEXT NOT NULL,
-                tls_mode TEXT NOT NULL
-            );)sql";
-
-// Published DDL is immutable. Any subsequent format change requires a migration.
 constexpr std::array version_one_sql{
-    accounts_sql,
+    R"sql(CREATE TABLE accounts (
+        id TEXT PRIMARY KEY NOT NULL,
+        display_name TEXT NOT NULL,
+        address TEXT NOT NULL,
+        imap_host TEXT NOT NULL,
+        imap_port INTEGER NOT NULL,
+        imap_username TEXT NOT NULL,
+        credential_env TEXT NOT NULL,
+        tls_mode TEXT NOT NULL
+    );)sql",
     R"sql(CREATE TABLE sync_state (
         account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
         folder TEXT NOT NULL CHECK(length(folder)>0),
@@ -90,9 +86,9 @@ struct Object {
 };
 using Catalog = std::vector<Object>;
 
-Error schema_error(std::string message, std::string stage = "storage.schema") {
+Error schema_error(std::string message) {
     return {ErrorCode::storage_error, std::move(message), std::nullopt, std::nullopt,
-            std::move(stage)};
+            "storage.schema"};
 }
 std::string text(sqlite3_stmt* statement, int column) {
     const auto* value = sqlite3_column_text(statement, column);
@@ -120,15 +116,15 @@ Result<Catalog> read_catalog(sqlite3* db) {
         return std::unexpected(sqlite_error(db, rc, "storage.schema"));
     return result;
 }
-Result<Catalog> reference_catalog(int version) {
+Result<Catalog> reference_catalog() {
     sqlite3* raw = nullptr;
     const int rc =
         sqlite3_open_v2(":memory:", &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> reference{raw, &sqlite3_close_v2};
     if (rc != SQLITE_OK)
         return std::unexpected(sqlite_error(raw, rc, "storage.schema"));
-    for (std::size_t i = 0; i < (version == 0 ? 1 : version_one_sql.size()); ++i) {
-        auto status = execute(raw, version_one_sql[i], "storage.schema");
+    for (const auto* sql : version_one_sql) {
+        auto status = execute(raw, sql, "storage.schema");
         if (!status)
             return std::unexpected(status.error());
     }
@@ -151,21 +147,6 @@ Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
         return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
     return std::unexpected(schema_error("Schema definition mismatch: " + expected[i].name));
 }
-Status validate_legacy_records(sqlite3* db) {
-    constexpr const char* sql = R"sql(SELECT count(*) FROM accounts WHERE
-        typeof(id)<>'text' OR typeof(display_name)<>'text' OR typeof(address)<>'text' OR
-        typeof(imap_host)<>'text' OR typeof(imap_port)<>'integer' OR
-        typeof(imap_username)<>'text' OR typeof(credential_env)<>'text' OR typeof(tls_mode)<>'text' OR
-        length(id)=0 OR length(address)=0 OR length(imap_host)=0 OR length(imap_username)=0 OR
-        length(credential_env)=0 OR imap_port NOT BETWEEN 1 AND 65535 OR tls_mode NOT IN ('implicit','starttls'))sql";
-    auto invalid = query_integer(db, sql, "storage.migrate");
-    if (!invalid)
-        return std::unexpected(invalid.error());
-    if (*invalid != 0)
-        return std::unexpected(
-            schema_error("Legacy account records are invalid", "storage.migrate"));
-    return {};
-}
 }  // namespace
 
 Status ensure_schema(sqlite3* db, OpenMode mode) {
@@ -179,43 +160,37 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
     if (*version != 0 && *version != schema_version)
         return std::unexpected(
             schema_error("Unsupported database version: " + std::to_string(*version)));
+
     auto actual = read_catalog(db);
     if (!actual)
         return std::unexpected(actual.error());
-    auto expected = reference_catalog(*version == 0 ? 0 : schema_version);
-    if (!expected)
-        return std::unexpected(expected.error());
-    const bool empty = actual->empty();
-    if (*version == schema_version || !empty) {
-        auto compatible = compare_catalogs(*actual, *expected);
-        if (!compatible)
-            return compatible;
-    }
+
     if (*version == 0) {
+        if (!actual->empty())
+            return std::unexpected(
+                schema_error("Cannot initialize a non-empty unversioned database"));
         if (mode == OpenMode::read_only)
             return std::unexpected(
-                schema_error(empty ? "Database requires initialization with write access"
-                                   : "Database requires migration with write access"));
-        if (!empty) {
-            auto valid = validate_legacy_records(db);
-            if (!valid)
-                return valid;
-        }
-        for (std::size_t i = empty ? 0 : 1; i < version_one_sql.size(); ++i) {
-            auto created = execute(db, version_one_sql[i], "storage.migrate");
+                schema_error("Database requires initialization with write access"));
+        for (const auto* sql : version_one_sql) {
+            auto created = execute(db, sql, "storage.initialize");
             if (!created)
                 return created;
         }
-        auto migrated = read_catalog(db);
-        if (!migrated)
-            return std::unexpected(migrated.error());
-        auto final_reference = reference_catalog(schema_version);
-        if (!final_reference)
-            return std::unexpected(final_reference.error());
-        auto valid = compare_catalogs(*migrated, *final_reference);
-        if (!valid)
-            return valid;
-        auto updated = execute(db, "PRAGMA main.user_version=1", "storage.migrate");
+        actual = read_catalog(db);
+        if (!actual)
+            return std::unexpected(actual.error());
+    }
+
+    auto expected = reference_catalog();
+    if (!expected)
+        return std::unexpected(expected.error());
+    auto valid = compare_catalogs(*actual, *expected);
+    if (!valid)
+        return valid;
+
+    if (*version == 0) {
+        auto updated = execute(db, "PRAGMA main.user_version=1", "storage.initialize");
         if (!updated)
             return updated;
     }

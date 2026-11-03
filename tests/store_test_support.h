@@ -108,10 +108,7 @@ inline std::string read_file(const std::filesystem::path& path) {
     expect(input.good(), "fixture should be readable");
     return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
 }
-inline std::string legacy_sql() {
-    return read_file(MAILAI_LEGACY_FIXTURE);
-}
-inline void insert_legacy_account(const Database& db) {
+inline void insert_account(const Database& db) {
     db.execute(
         "INSERT INTO accounts VALUES ('school', 'Student''s 学校邮箱', 'student@example.invalid', "
         "'imap.example.invalid', 993, 'student', 'TEST_PASSWORD_REF', 'implicit')");

@@ -1,88 +1,54 @@
 # SQLite 数据库生命周期实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans inline. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans inline. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 替换账号库的零散检查，交付完整版本 1 的打开、初始化、迁移、结构校验和失败恢复。
+**Goal:** 收敛为“空版本 0 初始化、版本 1 校验、其他状态拒绝”，删除开发中间数据库的迁移逻辑。
 
-**Architecture:** `SqliteStore::open` 协调连接配置、`ensure_schema` 和 WAL；固定 DDL 与目录比较集中在 schema 模块；SQLite 内部辅助管理语句、错误和事务。测试使用独立旧库夹具及共享连接辅助。
+**Architecture:** `SqliteStore::open` 继续协调连接配置、`ensure_schema` 和 WAL。schema 模块只管理当前版本 1 的 DDL、初始化和目录比较；语句与事务使用现有 RAII。
+
+**Scope:** 修改生命周期实现、测试和相关文档；不修改五表数据模型、公开接口，不实现邮件业务读写或通用迁移框架。
 
 **Tech Stack:** C++23、SQLite 3.37+、CMake 3.20+、Ninja、CTest、macOS。
 
-**Spec:** [已批准的生命周期设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)，隶属[阶段 2](mail-ai-assistant-stage-2.md) Task 2。
+**Spec:** [生命周期设计](../specs/mail-ai-assistant-sqlite-lifecycle-design.md)，隶属[阶段 2](mail-ai-assistant-stage-2.md) Task 2。用户已明确授权按修订后的打开策略直接实施。
 
-**Status:** 数据库生命周期已完成。独立代码审阅未发现缺陷；Debug／Release 各 5 项 CTest 全部通过，构建无警告。其余 Task 2 业务接口仍未实现。
+**Status:** 已完成本次单版本收敛。macOS Debug／Release 各 5 项 CTest 全部通过；账号 DDL 随后的缩进调整会导致旧格式版本 1 被拒绝，原结构和数据保留，兼容策略尚待确定。Task 2 的邮件业务接口、同步队列和进程锁仍未实现。
 
 ## Global Constraints
 
-- 保留工作区中的既有修改，不重置、不自动提交；在当前共享工作区完成用户指定修改。
-- 公共 `SqliteStore::open(path, OpenMode)` 和 `ensure_account` 的业务契约保持；新增类型均位于内部 `mailai::store_detail`。
-- 五表及两索引组成版本 1；版本 0 只识别空库和提交 `c0c537b` 的已知账号库；不支持版本返回 `storage_error`。
-- SQLite 忙错误映射为 `busy`；连接等待 1000 毫秒。初始化／迁移中版本更新与 DDL 同一事务。
-- WAL 在 schema 提交后独立配置并验证；失败允许留下完整有效的版本 1，不能声称回滚版本。
-- 只读连接不初始化、迁移、改版本或切换 WAL。不得暴露测试专用公共 API 或输出凭据／记录内容。
-- 只实现生命周期，不提前实现邮件业务读写、同步编排或进程锁。
+- 在当前共享工作区实施，不回退用户修改，不自动暂存、提交或推送。
+- 公共 `SqliteStore::open(path, OpenMode)` 和 `ensure_account` 接口不变；账号 DDL 缩进调整后的兼容性限制见规格第 4.1 节。
+- 版本 0 是未初始化状态；仅空库可以初始化，非空一律拒绝且保留数据；只读模式不初始化。
+- `schema_version=1`；不支持的版本和结构返回 `storage_error`，错误阶段为 `storage.schema`；初始化执行错误阶段为 `storage.initialize`。
+- 版本设置与建表在同一事务内；保留外键、1000ms busy timeout、WAL 和失败回滚契约，具体行为见规格。
 
 ## Review Focus
 
-1. 旧账号库的 SQL 空白与历史定义必须匹配：独立冻结旧库夹具；迁移前后比较原账号记录和定义，Task 1。
-2. 增加触发器、CHECK 或 UNIQUE 不能通过列形状检查：目录变体测试覆盖额外对象和约束，Task 1。
-3. 中途 DDL、版本写入和 COMMIT 失败不能留下半套 schema：测试连接 authorizer 控制失败，Task 2。
-4. WAL 失败发生在 schema 已提交之后：验证版本 1 保留且可重试，Task 2。
-5. 统计表、VACUUM 和内存数据库不能被误判为未知格式：实际 SQLite 测试这些操作后的打开行为，Task 2。
+1. 仅有账号表、已有完整结构但版本为 0，以及陌生表／视图，均不能被自动接管。
+2. 版本 1 即使目录为空也必须拒绝，不能进入初始化分支。
+3. 删除旧结构测试后，版本 1 的列类型、约束、额外对象检查仍有真实 SQLite 测试覆盖。
+4. 建表、版本设置和提交失败后，没有残留结构或活动事务，解除故障可重试。
+5. 有效版本 1 的数据、只读打开、外键、WAL、统计信息和锁争用行为不退化。
 
-## Task 1: 固定结构、版本与事务迁移
+## Task 1: 单版本生命周期收敛
 
-**Files:** 新建 `src/store/schema.h/.cpp`、`src/store/sqlite_utils.h/.cpp`、`tests/store_test_support.h`、`tests/fixtures/store/legacy_accounts.sql`；修改 `src/store/sqlite_store.cpp`、`tests/store_test.cpp`、`CMakeLists.txt`。
+**Files:** 修改 `src/store/schema.cpp`、`tests/store_test.cpp`、`tests/store_test_support.h`、`CMakeLists.txt`、`README.md`、`docs/dependencies.md`、本计划、生命周期设计和阶段 2 计划；删除 `tests/fixtures/store/legacy_accounts.sql`。
 
-**Interfaces:**
-
-- `using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>`。
-- `Error sqlite_error(sqlite3*, int rc, std::string_view stage)`；忙扩展码按低 8 位识别。
-- `Result<Statement> prepare(sqlite3*, std::string_view sql, std::string_view stage)`。
-- `Status execute(sqlite3*, const char* sql, std::string_view stage)`。
-- `Result<std::int64_t> query_integer(sqlite3*, const char* sql, std::string_view stage)`。
-- `enum class TransactionMode { read, write }`；可移动不可拷贝 `Transaction` 提供 `static Result<Transaction> begin(sqlite3*, TransactionMode)`、`Status commit()`，析构回滚活动事务。
-- `Status ensure_schema(sqlite3*, OpenMode)`，内部版本常量 `schema_version = 1`。
+**Interfaces:** 消费现有 `Result<T>`／`Status`、`Transaction::begin`／`commit` 和 SQLite helpers；保留 `Status ensure_schema(sqlite3*, OpenMode)`。内部 `reference_catalog()` 只生成版本 1，不再接受版本参数。
 
 **Steps:**
 
-- [x] 提取测试夹具，冻结实际历史 DDL；编写新库五表／两索引／版本 1、有效库重开、旧账号迁移、只读旧库拒绝、未知版本和对象／定义差异测试。
-- [x] 构建并运行 `store`，观察旧实现对完整版本 1 或旧库迁移的具体行为失败。
-- [x] 实现语句和事务辅助；事务提交成功前保持活动，任何提前返回回滚。
-- [x] 集中实现五表及索引 DDL；保留历史账号定义；参考内存库生成对象目录，与实际 `(type,name,tbl_name,sql)` 比较，排除 `sqlite_stat1/4`。
-- [x] 实现 `ensure_schema`：事务内分类 0／1／不支持版本，验证旧账号记录，迁移并在最后更新版本；只读模式只接受完整版本 1。
-- [x] 替换 `sqlite_store.cpp` 中的三个布尔检查函数，接入新生命周期；账号写入复用语句辅助但不改变身份保护逻辑。
-- [x] 运行全部现有 CTest，要求全部通过且无编译警告。
+- [x] 将旧账号迁移测试替换为非空版本 0 拒绝测试，断言两种打开模式均返回 `storage_error`，目录、版本及记录不变。
+- [x] 构建并运行 `store`，确认当前实现因自动迁移账号库而违反新契约。
+- [x] 删除旧结构识别、旧记录校验和迁移分支；仅在空版本 0 上初始化，统一校验版本 1 目录，最后设置版本并提交。
+- [x] 删除旧 SQL 夹具及编译宏，保留通用账号插入辅助；将定义变体测试移到版本 1，补充空目录版本 1 拒绝和非空版本 0 保护场景。
+- [x] 保留初始化建表、版本设置和提交故障注入，验证回滚持久状态及恢复重试；更新错误阶段为 `storage.initialize`。
+- [x] 运行 Debug／Release 全套 CTest、格式检查和 `git diff --check`，修正相关文档的旧库兼容描述。
+- [x] 完成一次独立代码审阅，处理影响契约的发现并记录实际验证结论。
 
-**Verification:** `cmake --build build/macos-debug`，然后 `ctest --test-dir build/macos-debug --output-on-failure`；预期退出 0。`store` 独立检查表名、版本、索引和账号保留，不只调用被测校验器。
+**Verification:**
 
-## Task 2: 配置与失败恢复验收
-
-**Files:** `src/store/sqlite_utils.h/.cpp`、`src/store/sqlite_store.cpp`、`tests/store_test.cpp`、`CMakeLists.txt`。
-
-**Interfaces:** `Status configure_connection(sqlite3*)` 配置扩展返回码、1000ms busy timeout 和外键回读；`Status configure_wal(sqlite3*)` 在事务外对文件库设置并回读 WAL，内存库跳过。
-
-**Steps:**
-
-- [x] 编写并运行连接外键实际拒绝、WAL 回读、1000ms 外部写锁忙错误、损坏文件及 schema、内存数据库、VACUUM／ANALYZE 重开测试。
-- [x] 实现连接配置，在 `open` 中按“连接配置→ensure_schema→仅写模式 WAL”装配。
-- [x] 使用测试原生连接 authorizer 拒绝第二张表、版本设置、COMMIT 或 WAL，验证阶段、返回码、回滚状态以及后续重试。
-- [x] 参数化验证版本 -1、2、INT32_MIN、INT32_MAX 的两种模式，以及有效版本 1 只读不能写入。
-- [x] 独立断言外键、远端唯一键、解析状态和附件顺序键等关键约束能实际拒绝非法写入。
-- [x] 运行 Debug 全套 CTest，要求全部通过；测试不使用真实网络和邮件数据。
-
-**Verification:** 与 Task 1 相同，预期退出 0；authorizer 失败场景全部检查版本、表、哨兵行和 `sqlite3_get_autocommit`，解除故障后重试成功。
-
-## Task 3: 审阅、Release 和文档收口
-
-**Files:** 上述实现／测试文件；`README.md`、`docs/dependencies.md`、生命周期设计、本计划和阶段 2 状态。
-
-**Steps:**
-
-- [x] 对照设计完成一次独立代码审阅，修复影响数据安全或契约的发现，并为新发现添加有意义的回归测试。
-- [x] 新建 `build/verify-sqlite-release` 构建目录，使用 README 的 Homebrew 前缀和本机部署目标配置 Release。
-- [x] 运行 Release 构建和全套 CTest，要求退出 0、无编译警告；执行 `git diff --check`。
-- [x] 文档记录已实现的数据库生命周期和真实 Debug／Release 验证结果；Task 2 整体保持进行中，不把建表当作邮件存储完成。
-- [x] 仅更新本计划勾选状态与一至两句验证结论，交付工作区改动清单；不自动暂存或提交。
-
-**Verification:** `cmake --build build/verify-sqlite-release`；`ctest --test-dir build/verify-sqlite-release --output-on-failure`；`git diff --check`。预期均退出 0。
+- `cmake --build build/macos-debug --target store_test` 和 `ctest --test-dir build/macos-debug -R '^store$' --output-on-failure`；最终预期退出 0。
+- `cmake --build build/macos-debug` 和 `ctest --test-dir build/macos-debug --output-on-failure`；预期 5/5 通过且无构建警告。
+- `cmake --build build/verify-sqlite-release` 和 `ctest --test-dir build/verify-sqlite-release --output-on-failure`；预期 5/5 通过且无构建警告。
+- `clang-format --dry-run --Werror src/store/schema.cpp tests/store_test.cpp tests/store_test_support.h` 和 `git diff --check`；预期退出 0。

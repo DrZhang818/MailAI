@@ -71,6 +71,11 @@ void test_empty_and_missing_paths() {
         empty.execute("PRAGMA user_version=0");
     }
     expect_storage_error(SqliteStore::open(path, OpenMode::read_only));
+    {
+        Database empty(path, SQLITE_OPEN_READONLY);
+        expect(empty.catalog().empty() && empty.integer("PRAGMA user_version") == 0,
+               "read-only rejection must not initialize an empty database");
+    }
     initialize(path);
     Database db(path);
     expect(db.integer("PRAGMA user_version") == 1, "empty file should initialize version 1");
@@ -80,32 +85,29 @@ void test_empty_and_missing_paths() {
            "store must not create parent directories");
 }
 
-void test_legacy_migration() {
+void test_unversioned_account_database_is_preserved() {
     TempDirectory directory;
-    const auto path = directory.path() / "legacy.sqlite3";
+    const auto source = directory.path() / "source.sqlite3";
+    initialize(source);
+    Database source_db(source, SQLITE_OPEN_READONLY);
+    const auto accounts_sql = source_db.text("SELECT sql FROM sqlite_schema WHERE name='accounts'");
+    const auto path = directory.path() / "unversioned-accounts.sqlite3";
     Database db(path);
-    db.execute(legacy_sql());
-    insert_legacy_account(db);
+    db.execute(accounts_sql);
+    insert_account(db);
     const auto original = db.rows("SELECT * FROM accounts");
-    const auto definition = db.text("SELECT sql FROM sqlite_schema WHERE name='accounts'");
-    expect_storage_error(SqliteStore::open(path, OpenMode::read_only));
-    expect(db.integer("PRAGMA user_version") == 0, "read-only opening must not migrate");
-    initialize(path);
-    expect(db.rows("SELECT * FROM accounts") == original,
-           "migration should retain exact account values");
-    expect(db.text("SELECT sql FROM sqlite_schema WHERE name='accounts'") == definition,
-           "migration must retain the original accounts definition");
-    expect(db.integer("PRAGMA user_version") == 1, "migration should set version 1");
-    expect(
-        db.integer(
-            "SELECT (SELECT count(*) FROM sync_state)+(SELECT count(*) FROM sync_pending)+(SELECT "
-            "count(*) FROM messages)+(SELECT count(*) FROM attachments)") == 0,
-        "migration must not invent mail or sync state");
+    const auto before = db.catalog();
+    for (auto mode : modes) {
+        expect_storage_error(SqliteStore::open(path, mode));
+        expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
+               "nonempty unversioned database must retain its schema and version");
+        expect(db.rows("SELECT * FROM accounts") == original,
+               "rejected unversioned database must retain exact account values");
+    }
 }
 
 void test_unsupported_versions() {
-    for (int version :
-         {-1, 2, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), 1}) {
+    for (int version : {-1, 2, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
         for (auto mode : modes) {
             TempDirectory directory;
             const auto path = directory.path() / "version.sqlite3";
@@ -124,10 +126,67 @@ void test_unsupported_versions() {
     }
 }
 
-void test_legacy_schema_variants() {
-    const auto original = legacy_sql();
+void test_unversioned_schema_variants() {
+    for (const auto* sql :
+         {"CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('keep me');",
+          "CREATE VIEW sentinel AS SELECT 'keep me' AS value;",
+          "CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('keep me'); "
+          "CREATE INDEX extra_index ON sentinel(value);",
+          "CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('keep me'); "
+          "CREATE TRIGGER refuse_delete BEFORE DELETE ON sentinel BEGIN SELECT "
+          "RAISE(ABORT,'disabled'); END;"}) {
+        for (auto mode : modes) {
+            TempDirectory directory;
+            const auto path = directory.path() / "unversioned.sqlite3";
+            Database db(path);
+            db.execute(sql);
+            const auto before = db.catalog();
+            expect_storage_error(SqliteStore::open(path, mode));
+            expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
+                   "nonempty unversioned schema must not be initialized");
+            expect(db.text("SELECT value FROM sentinel") == "keep me",
+                   "unversioned rejection must preserve existing contents");
+        }
+    }
+}
+
+void test_unversioned_complete_database_is_preserved() {
+    TempDirectory directory;
+    const auto path = directory.path() / "unversioned-complete.sqlite3";
+    initialize(path);
+    Database db(path);
+    insert_account(db);
+    db.execute("PRAGMA user_version=0");
+    const auto before = db.catalog();
+    const auto accounts = db.rows("SELECT * FROM accounts");
+    for (auto mode : modes) {
+        expect_storage_error(SqliteStore::open(path, mode));
+        expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
+               "complete but unversioned schema must not be adopted");
+        expect(db.rows("SELECT * FROM accounts") == accounts,
+               "unversioned rejection must retain account values");
+    }
+}
+
+void test_version_one_without_schema_is_rejected() {
+    TempDirectory directory;
+    const auto path = directory.path() / "marked-empty.sqlite3";
+    Database db(path);
+    db.execute("PRAGMA user_version=1");
+    for (auto mode : modes) {
+        expect_storage_error(SqliteStore::open(path, mode));
+        expect(db.catalog().empty() && db.integer("PRAGMA user_version") == 1,
+               "empty version 1 must not be reinitialized");
+    }
+}
+
+void test_version_one_definition_variants() {
+    TempDirectory directory;
+    const auto source = directory.path() / "source.sqlite3";
+    initialize(source);
+    Database source_db(source, SQLITE_OPEN_READONLY);
+    const auto original = source_db.text("SELECT sql FROM sqlite_schema WHERE name='accounts'");
     const std::vector<std::string> variants{
-        "CREATE TABLE accounts(id TEXT, name TEXT)",
         replace_once(original, "imap_port INTEGER NOT NULL", "imap_port TEXT NOT NULL"),
         replace_once(original, "id TEXT PRIMARY KEY NOT NULL", "id TEXT NOT NULL"),
         replace_once(original, "imap_host TEXT NOT NULL", "imap_host TEXT"),
@@ -140,24 +199,21 @@ void test_legacy_schema_variants() {
         replace_once(original, "imap_port INTEGER NOT NULL",
                      "imap_port INTEGER NOT NULL CHECK(imap_port=993)"),
         replace_once(original, "tls_mode TEXT NOT NULL",
-                     "tls_mode TEXT NOT NULL, extra TEXT GENERATED ALWAYS AS (id)"),
-        original + "CREATE VIEW account_names AS SELECT id FROM accounts;",
-        original + "CREATE INDEX extra_index ON accounts(address);",
-        original +
-            "CREATE TRIGGER refuse_accounts BEFORE INSERT ON accounts BEGIN SELECT "
-            "RAISE(ABORT,'disabled'); END;",
-        "CREATE VIEW accounts AS SELECT 'fake' AS id;"};
-    for (const auto& sql : variants)
+                     "tls_mode TEXT NOT NULL, extra TEXT GENERATED ALWAYS AS (id)")};
+    for (const auto& sql : variants) {
         for (auto mode : modes) {
-            TempDirectory directory;
-            const auto path = directory.path() / "variant.sqlite3";
+            TempDirectory variant_directory;
+            const auto path = variant_directory.path() / "definition.sqlite3";
+            initialize(path);
             Database db(path);
+            db.execute("DROP TABLE accounts;");
             db.execute(sql);
             const auto before = db.catalog();
             expect_storage_error(SqliteStore::open(path, mode));
-            expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
-                   "unknown legacy schema must be preserved without upgrading");
+            expect(db.catalog() == before && db.integer("PRAGMA user_version") == 1,
+                   "incompatible version 1 definition must not be repaired");
         }
+    }
 }
 
 void test_version_one_catalog_variants() {
@@ -173,7 +229,7 @@ void test_version_one_catalog_variants() {
             const auto path = directory.path() / "changed.sqlite3";
             initialize(path);
             Database db(path);
-            insert_legacy_account(db);
+            insert_account(db);
             db.execute(mutation);
             const auto before = db.catalog();
             const auto accounts = db.rows("SELECT * FROM accounts");
@@ -182,25 +238,6 @@ void test_version_one_catalog_variants() {
                    "rejected version 1 must not be repaired or lose data");
             expect(db.integer("PRAGMA user_version") == 1, "rejected version 1 must retain marker");
         }
-    }
-}
-
-void test_invalid_legacy_records() {
-    for (const auto& mutation :
-         {"UPDATE accounts SET imap_host=''", "UPDATE accounts SET imap_port=0",
-          "UPDATE accounts SET imap_port=70000", "UPDATE accounts SET tls_mode='invalid'",
-          "UPDATE accounts SET imap_port='not a port'", "UPDATE accounts SET credential_env=''"}) {
-        TempDirectory directory;
-        const auto path = directory.path() / "bad-record.sqlite3";
-        Database db(path);
-        db.execute(legacy_sql());
-        insert_legacy_account(db);
-        db.execute(mutation);
-        const auto records = db.rows("SELECT * FROM accounts");
-        expect_storage_error(SqliteStore::open(path, OpenMode::read_write_create));
-        expect(
-            db.rows("SELECT * FROM accounts") == records && db.integer("PRAGMA user_version") == 0,
-            "invalid old records must not be cleaned or migrated");
     }
 }
 
@@ -274,45 +311,34 @@ int deny_operation(void* context, int action, const char* first, const char* sec
 
 void test_schema_failures_roll_back() {
     using namespace mailai::store_detail;
-    for (bool legacy : {false, true}) {
-        for (const auto& failure : std::array{Denial{SQLITE_CREATE_TABLE, "sync_state", ""},
-                                              Denial{SQLITE_PRAGMA, "user_version", "1"},
-                                              Denial{SQLITE_TRANSACTION, "COMMIT", ""}}) {
-            TempDirectory directory;
-            const auto path = directory.path() / "rollback.sqlite3";
-            Database db(path);
-            expect(configure_connection(db.get()).has_value(), "test connection should configure");
-            if (legacy) {
-                db.execute(legacy_sql());
-                insert_legacy_account(db);
-            }
-            const auto before = db.catalog();
-            const auto accounts = legacy ? db.rows("SELECT * FROM accounts")
-                                         : std::vector<std::vector<std::string>>{};
-            auto denial = failure;
-            sqlite3_set_authorizer(db.get(), &deny_operation, &denial);
-            auto result = ensure_schema(db.get(), OpenMode::read_write_create);
-            sqlite3_set_authorizer(db.get(), nullptr, nullptr);
-            expect(denial.triggered, "failure injection should actually intercept the operation");
-            expect(!result && result.error().code == ErrorCode::storage_error,
-                   "injected failure should be reported");
-            expect(result.error().stage == (failure.action == SQLITE_TRANSACTION
-                                                ? "storage.transaction"
-                                                : "storage.migrate"),
-                   "failure stage should identify the operation");
-            expect(sqlite3_get_autocommit(db.get()) == 1,
-                   "failed schema work should leave no active transaction");
-            expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
-                   "failed schema work must roll back every new object and version");
-            if (legacy)
-                expect(db.rows("SELECT * FROM accounts") == accounts,
-                       "failed migration must retain old account values");
-            Database persisted(path, SQLITE_OPEN_READONLY);
-            expect(persisted.catalog() == before && persisted.integer("PRAGMA user_version") == 0,
-                   "rollback should survive independent reopening");
-            expect(ensure_schema(db.get(), OpenMode::read_write_create).has_value(),
-                   "schema work should succeed after the fault is removed");
-        }
+    for (const auto& failure : std::array{Denial{SQLITE_CREATE_TABLE, "sync_state", ""},
+                                          Denial{SQLITE_PRAGMA, "user_version", "1"},
+                                          Denial{SQLITE_TRANSACTION, "COMMIT", ""}}) {
+        TempDirectory directory;
+        const auto path = directory.path() / "rollback.sqlite3";
+        Database db(path);
+        expect(configure_connection(db.get()).has_value(), "test connection should configure");
+        const auto before = db.catalog();
+        auto denial = failure;
+        sqlite3_set_authorizer(db.get(), &deny_operation, &denial);
+        auto result = ensure_schema(db.get(), OpenMode::read_write_create);
+        sqlite3_set_authorizer(db.get(), nullptr, nullptr);
+        expect(denial.triggered, "failure injection should actually intercept the operation");
+        expect(!result && result.error().code == ErrorCode::storage_error,
+               "injected failure should be reported");
+        expect(
+            result.error().stage == (failure.action == SQLITE_TRANSACTION ? "storage.transaction"
+                                                                          : "storage.initialize"),
+            "failure stage should identify the operation");
+        expect(sqlite3_get_autocommit(db.get()) == 1,
+               "failed initialization should leave no active transaction");
+        expect(db.catalog() == before && db.integer("PRAGMA user_version") == 0,
+               "failed initialization must roll back every new object and version");
+        Database persisted(path, SQLITE_OPEN_READONLY);
+        expect(persisted.catalog() == before && persisted.integer("PRAGMA user_version") == 0,
+               "rollback should survive independent reopening");
+        expect(ensure_schema(db.get(), OpenMode::read_write_create).has_value(),
+               "initialization should succeed after the fault is removed");
     }
 }
 
@@ -327,7 +353,7 @@ void test_connection_configuration_and_wal_failure() {
     expect(db.integer("PRAGMA busy_timeout") == 1000, "SQLite busy timeout should be 1000ms");
     expect(ensure_schema(db.get(), OpenMode::read_write_create).has_value(),
            "schema should commit before WAL");
-    insert_legacy_account(db);
+    insert_account(db);
     Denial denial{SQLITE_PRAGMA, "journal_mode", "WAL"};
     sqlite3_set_authorizer(db.get(), &deny_operation, &denial);
     auto failed = configure_wal(db.get());
@@ -384,7 +410,7 @@ void test_constraints_and_raw_bytes() {
                "invalid write should be rejected by a real SQLite constraint");
     };
     rejected("INSERT INTO sync_state(account_id,folder) VALUES('missing','INBOX')");
-    insert_legacy_account(db);
+    insert_account(db);
     rejected(
         "INSERT INTO sync_state(account_id,folder,last_discovered_uid) VALUES('school','INBOX',1)");
     db.execute(
@@ -440,7 +466,7 @@ void test_memory_and_statistics() {
     const auto path = directory.path() / "statistics.sqlite3";
     initialize(path);
     Database db(path);
-    insert_legacy_account(db);
+    insert_account(db);
     db.execute("ANALYZE; VACUUM;");
     expect(db.integer("SELECT count(*) FROM sqlite_schema WHERE name='sqlite_stat1'") == 1,
            "statistics fixture should actually contain a statistics table");
@@ -469,11 +495,15 @@ int main() {
     const std::pair<const char*, void (*)()> tests[]{
         {"initialize_and_reopen", test_initialize_and_reopen},
         {"empty_and_missing_paths", test_empty_and_missing_paths},
-        {"legacy_migration", test_legacy_migration},
+        {"unversioned_account_database_is_preserved",
+         test_unversioned_account_database_is_preserved},
         {"unsupported_versions", test_unsupported_versions},
-        {"legacy_schema_variants", test_legacy_schema_variants},
+        {"unversioned_schema_variants", test_unversioned_schema_variants},
+        {"unversioned_complete_database_is_preserved",
+         test_unversioned_complete_database_is_preserved},
+        {"version_one_without_schema_is_rejected", test_version_one_without_schema_is_rejected},
+        {"version_one_definition_variants", test_version_one_definition_variants},
         {"version_one_catalog_variants", test_version_one_catalog_variants},
-        {"invalid_legacy_records", test_invalid_legacy_records},
         {"non_database_file", test_non_database_file},
         {"account_save_and_identity_protection", test_account_save_and_identity_protection},
         {"schema_failures_roll_back", test_schema_failures_roll_back},
