@@ -4,7 +4,7 @@
 
 当前完成阶段 1：使用内存中的虚构邮件运行终端程序。
 
-阶段 2 已实现环境变量配置、共享类型、基础依赖及 SQLite 数据库生命周期：五表版本 1 初始化、结构校验和失败回滚。终端仍使用示例数据；邮件缓存业务读写和真实收信将在后续任务实现。
+阶段 2 已实现环境变量配置、共享类型、基础依赖、SQLite 数据库生命周期，以及本地邮件列表和详情查询（含附件信息）。终端仍使用示例数据；缓存写入和真实收信将在后续任务实现。
 
 - 列出全部邮件或按账号筛选。
 - 按接收时间降序、同时间 ID 升序排列。
@@ -28,6 +28,8 @@
 brew install ninja pkgconf sqlite curl gmime libxml2 libffi
 ```
 
+代码格式化使用 `clang-format 23+`（`brew install clang-format`），规则见根目录 `.clang-format`。VS Code 工作区已指定 `/opt/homebrew/bin/clang-format`，保存 C++ 文件时自动格式化；长参数和初始化字段展开，短调用保持紧凑。
+
 在项目根目录的 macOS 终端执行：
 
 ```sh
@@ -40,11 +42,15 @@ ctest --test-dir build/macos-debug --output-on-failure
 
 命令将最低运行系统版本设为当前 macOS 版本，并显式选用 Homebrew 的库；生成的程序不保证可在较旧的 macOS 上运行。
 
-CTest 包含 `inbox`（核心查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+CTest 包含 `inbox`（内存查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）、`store_list`（SQLite 列表查询）、`store_find`（SQLite 详情与附件查询）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
 
 数据库生命周期由核心库的 `SqliteStore::open` 提供，尚未接入 CLI。读写打开仅在空版本 0 上初始化完整版本 1，并启用外键和文件数据库 WAL；只读打开仅接受结构匹配的版本 1。非空版本 0 和其他不支持的版本均返回错误，保留原结构及数据。结构校验只兼容本项目已知的 DDL，手工改写的等价 SQL 也可能被拒绝；具体契约见[生命周期设计](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)。
 
 账号建表 SQL 使用最初的版本 1 缩进，以便打开对应数据库。使用提交 `d0c9410` 创建的数据库采用另一种缩进，当前会被拒绝打开，原结构和数据保留。
+
+`SqliteStore::list` 支持读取全部账号或指定账号的邮件列表，关联账号显示名称，按时间降序、同时间 ID 升序排序，并保留解析及历史状态。未知账号返回错误，已知空账号返回空列表；该接口尚未接入 CLI。
+
+`SqliteStore::find` 按本地 ID 返回完整邮件和按序号排列的附件信息。无附件仍成功；ID 为 0 返回参数错误，不存在或超过 SQLite 整数范围的 ID 返回未找到。列表和详情查询均支持只读连接，已通过 Debug／Release 各 7 项 CTest；详情接口尚未接入 CLI。
 
 ## 使用
 

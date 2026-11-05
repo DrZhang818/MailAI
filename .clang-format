@@ -1,4 +1,5 @@
 BasedOnStyle: Google
+# Use clang-format 23 or newer; VS Code uses the same local binary.
 IndentWidth: 4
 ContinuationIndentWidth: 4
 UseTab: Never
@@ -8,3 +9,22 @@ DerivePointerAlignment: false
 PointerAlignment: Left
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
+
+# Use a fixed continuation indent rather than aligning to a long function name.
+AlignAfterOpenBracket: false
+PenaltyBreakBeforeFirstCallParameter: 0
+
+# Keep short calls compact, but expand long argument and parameter lists.
+PackArguments:
+  BinPack: OnePerLine
+PackParameters:
+  BinPack: OnePerLine
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# Give multiline Error/InboxItem initializers their own opening and closing lines.
+BreakAfterOpenBracketBracedList: true
+BreakBeforeCloseBracketBracedList: true
+
+# SQL text participates in schema comparison and must not be reformatted.
+RawStringFormats: []

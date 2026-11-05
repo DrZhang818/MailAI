@@ -1,8 +1,10 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 #include "mailai/config.h"
+#include "mailai/inbox.h"
 #include "mailai/model.h"
 
 struct sqlite3;
@@ -24,6 +26,10 @@ public:
     SqliteStore& operator=(SqliteStore&& other) noexcept;
 
     Status ensure_account(const Account& account, const ImapSettings& imap);
+
+    Result<std::vector<InboxItem>> list(const InboxQuery& query);
+
+    Result<Mail> find(MailId id);
 
 private:
     explicit SqliteStore(sqlite3* db) noexcept;
