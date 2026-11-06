@@ -21,6 +21,7 @@ add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
     src/store/sqlite_store.cpp
+    src/store/sqlite_sync.cpp
     src/store/sqlite_utils.cpp
     src/store/schema.cpp
 )
@@ -69,10 +70,15 @@ add_executable(store_find_test
     tests/store_find_test.cpp
 )
 
+add_executable(store_sync_test
+    tests/store_sync_test.cpp
+)
+
 target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
 target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(store_list_test PRIVATE SQLite3::SQLite3)
 target_link_libraries(store_find_test PRIVATE SQLite3::SQLite3)
+target_link_libraries(store_sync_test PRIVATE SQLite3::SQLite3)
 
 # Executables consume the core library's public requirements.
 foreach(mailai_target IN ITEMS
@@ -83,6 +89,7 @@ foreach(mailai_target IN ITEMS
     store_test
     store_list_test
     store_find_test
+    store_sync_test
 )
     target_link_libraries(${mailai_target} PRIVATE mailai_core)
 endforeach()
@@ -103,6 +110,7 @@ foreach(mailai_target IN ITEMS
     store_test
     store_list_test
     store_find_test
+    store_sync_test
 )
     set_target_properties(${mailai_target} PROPERTIES
         CXX_STANDARD 23
@@ -124,6 +132,7 @@ add_test(NAME config COMMAND config_test)
 add_test(NAME store COMMAND store_test)
 add_test(NAME store_list COMMAND store_list_test)
 add_test(NAME store_find COMMAND store_find_test)
+add_test(NAME store_sync COMMAND store_sync_test)
 
 add_test(NAME cli_smoke
     COMMAND "${CMAKE_COMMAND}"

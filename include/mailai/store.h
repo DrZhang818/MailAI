@@ -1,11 +1,13 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include "mailai/config.h"
 #include "mailai/inbox.h"
 #include "mailai/model.h"
+#include "mailai/sync_types.h"
 
 struct sqlite3;
 
@@ -30,6 +32,8 @@ public:
     Result<std::vector<InboxItem>> list(const InboxQuery& query);
 
     Result<Mail> find(MailId id);
+
+    Result<SyncState> state(const AccountId& account_id, std::string_view folder);
 
 private:
     explicit SqliteStore(sqlite3* db) noexcept;
