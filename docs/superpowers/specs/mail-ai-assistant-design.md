@@ -2,7 +2,7 @@
 
 日期：2026-10-19。流程：Superpowers brainstorming，架构级设计。
 
-状态：用户已回复“通过”，本书面规格已批准。阶段 1 的核心查询与示例 CLI 已验收；阶段 2 已验证配置、共享类型、基础依赖和数据库生命周期。邮件缓存业务读写、真实邮箱连接和模型调用尚未实现或验证，具体状态以阶段计划为准。
+状态：用户已回复“通过”，本书面规格已批准。阶段 1 的核心查询与示例 CLI 已验收；阶段 2 已验证配置、共享类型、基础依赖和数据库生命周期。邮件缓存业务读写、真实邮箱连接和模型调用尚未实现或验证，具体状态以[阶段进度记录](../plans/phase-02-mail-sync/progress.md)为准。
 
 项目协作约定：新文件按主题命名，不加日期前缀；当前专注本项目，暂停维护原实习计划和 CCG 学习记录。
 
@@ -38,7 +38,7 @@
 
 语言标准采用 C++23；核心库公开 `cxx_std_23` 编译要求。所有项目目标设置 `CXX_STANDARD 23`、`CXX_STANDARD_REQUIRED ON`、`CXX_EXTENSIONS OFF`。CMake 最低版本为 3.20，标准设置依据 [CMake 官方文档](https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html)。
 
-网络采用 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，MIME 与 HTML 分别采用 GMime、libxml2，SQLite 保存本地数据；基础接入已验证，实际版本和验证范围见[依赖记录](../../dependencies.md)。邮件及 HTML 样本和真实收信由后续任务验收，依赖要求见[阶段 2 计划](../plans/mail-ai-assistant-stage-2.md)。JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)，尚未接入。
+网络采用 [libcurl](https://curl.se/libcurl/c/imap-fetch.html)，MIME 与 HTML 分别采用 GMime、libxml2，SQLite 保存本地数据；基础接入已验证，实际版本和验证范围见[依赖记录](../../dependencies.md)。邮件及 HTML 样本和真实收信由后续任务验收，依赖要求见[阶段 2 计划](../plans/phase-02-mail-sync/plan.md)。JSON 候选为 [nlohmann/json](https://json.nlohmann.me/integration/cmake/)，尚未接入。
 
 ## 3. 数据、账号与同步
 
@@ -175,7 +175,7 @@
 | 6 一键批量回复 | 明确集合、意图、归并、直接发送、部分失败与取消 | 一条命令完成指定范围，恢复规则通过 |
 | 7 终端交付 | help／JSON／退出码、配置与依赖说明、回归、完整演示 | 干净构建可复现收信、汇报与两种回复 |
 
-详细实现计划按阶段由 writing-plans 编写，并指导用户实现。[阶段 1 实现计划](../plans/mail-ai-assistant-stage-1.md) 已完成，Debug／Release 各 3 项 CTest 全部通过，CLI 覆盖 31 次调用，代码截至 f4948ab。[阶段 2 实现计划](../plans/mail-ai-assistant-stage-2.md) 已获用户同意，当前执行 Task 2；具体进度、依赖选择和验证记录统一以该计划为准。
+每阶段在实施前完成详细计划，实施期间保持计划不变。[阶段 1 计划](../plans/phase-01-foundation/plan.md)与[阶段 2 计划](../plans/phase-02-mail-sync/plan.md)分别定义目标、架构、规格、验收条件和任务；执行状态及验收证据分别见[阶段 1 进度](../plans/phase-01-foundation/progress.md)和[阶段 2 进度](../plans/phase-02-mail-sync/progress.md)。
 
 ## 10. 调研依据
 

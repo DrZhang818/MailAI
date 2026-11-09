@@ -4,7 +4,7 @@
 
 当前完成阶段 1：使用内存中的虚构邮件运行终端程序。
 
-阶段 2 已实现环境变量配置、共享类型、基础依赖、SQLite 数据库生命周期、本地邮件列表和详情查询（含附件信息），以及同步状态读取。终端仍使用示例数据；缓存写入和真实收信将在后续任务实现。
+阶段 2 已实现环境变量配置、共享类型、基础依赖、SQLite 数据库生命周期、本地邮件查询、同步任务登记、邮件与附件保存，以及失败和同步结果记录。数据目录写锁尚未实现；终端仍使用示例数据，尚未接入本地缓存和真实收信。
 
 - 列出全部邮件或按账号筛选。
 - 按接收时间降序、同时间 ID 升序排列。
@@ -12,7 +12,9 @@
 - 区分空结果、未知账号和无效邮件 ID。
 - 提供命令行帮助、参数校验和退出码。
 
-成功展示邮件时标明“数据来源：示例”。示例账号为 `school` 和 `qq`，不代表已连接真实邮箱；真实收信、持久化、AI 和回复功能将在后续阶段接入。
+成功展示邮件时标明“数据来源：示例”。示例账号为 `school` 和 `qq`，不代表已连接真实邮箱；终端的本地缓存读取和真实收信将在阶段 2 后续任务接入，AI 和回复功能属于后续阶段。
+
+阶段目标与实施步骤见[阶段 1 计划](docs/superpowers/plans/phase-01-foundation/plan.md)和[阶段 2 计划](docs/superpowers/plans/phase-02-mail-sync/plan.md)；执行状态与验收记录分别见[阶段 1 进度](docs/superpowers/plans/phase-01-foundation/progress.md)和[阶段 2 进度](docs/superpowers/plans/phase-02-mail-sync/progress.md)。
 
 ## 构建与测试
 
@@ -42,7 +44,7 @@ ctest --test-dir build/macos-debug --output-on-failure
 
 命令将最低运行系统版本设为当前 macOS 版本，并显式选用 Homebrew 的库；生成的程序不保证可在较旧的 macOS 上运行。
 
-CTest 包含 `inbox`（内存查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）、`store_list`（SQLite 列表查询）、`store_find`（SQLite 详情与附件查询）、`store_sync`（同步状态读取）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+CTest 包含 `inbox`（内存查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）、`store_list`（SQLite 列表查询）、`store_find`（SQLite 详情与附件查询）、`store_sync`（同步状态、待办查询与任务登记）、`store_write`（邮件保存、失败记录与同步结果）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
 
 数据库生命周期由核心库的 `SqliteStore::open` 提供，尚未接入 CLI。读写打开仅在空版本 0 上初始化完整版本 1，并启用外键和文件数据库 WAL；只读打开仅接受结构匹配的版本 1。非空版本 0 和其他不支持的版本均返回错误，保留原结构及数据。结构校验只兼容本项目已知的 DDL，手工改写的等价 SQL 也可能被拒绝；具体契约见[生命周期设计](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)。
 
@@ -52,7 +54,9 @@ CTest 包含 `inbox`（内存查询）、`cli`（参数、展示与错误处理�
 
 `SqliteStore::find` 按本地 ID 返回完整邮件和按序号排列的附件信息。无附件仍成功；ID 为 0 返回参数错误，不存在或超过 SQLite 整数范围的 ID 返回未找到；该接口尚未接入 CLI。
 
-`SqliteStore::state` 按账号和文件夹读取同步状态：已知账号尚无记录时返回空状态，未知账号返回错误，非法存储字段明确报错。列表、详情和同步状态查询均支持只读连接，已通过 Debug／Release 各 8 项 CTest；同步待办登记与推进尚未实现。
+`SqliteStore::state` 按账号和文件夹读取同步状态；`pending` 返回当前 UIDVALIDITY 下仍需重试的邮件。`schedule` 在同一事务中登记待办并更新发现进度，UIDVALIDITY 变化时保留旧邮件为历史记录，并清除旧待办。
+
+`SqliteStore::complete` 在同一事务中保存邮件、替换附件并处理待办，重复保存同一封远端邮件时保留本地 ID。解析失败时保存原文和诊断；`fail` 记录抓取失败，确认远端邮件消失后停止重试；`record_outcome` 记录每轮尝试，仅在整轮成功时更新成功时间。当前 Debug／Release 各 9 项 CTest 通过，数据目录写锁仍待实现。
 
 ## 使用
 

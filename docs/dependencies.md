@@ -1,12 +1,12 @@
 # Dependencies
 
-当前开发平台为 macOS。完整选型和版本下限见[阶段 2 计划](superpowers/plans/mail-ai-assistant-stage-2.md)。
+当前开发平台为 macOS。完整选型和版本下限见[阶段 2 计划](superpowers/plans/phase-02-mail-sync/plan.md)。
 
 ## macOS 本机验证
 
 macOS 27.2（Apple Silicon）、Apple Clang 21.0.0、CMake 4.4.5、Ninja 1.13.2、pkg-config 3.0.10；CMake 选用 Homebrew SQLite 3.54.1、libcurl 8.23.0、GMime 3.2.15、libxml2 2.15.4 和 libffi 3.8.0。Homebrew curl 的版本信息列出 IMAP、IMAPS 和 SSL；此检查不连接服务器。Python 3.14.10 和 OpenSSL 命令行 4.1.0 已安装。
 
-按 README 的 macOS 命令构建 `build/macos-debug`（Debug）和 `build/verify-sqlite-release`（Release），两种模式各 8 项 CTest 全部通过，构建无警告。`store` 验证数据库生命周期、约束与失败恢复；`store_list`、`store_find` 使用真实临时 SQLite 验证列表筛选与排序、详情与附件、ID 边界、只读访问、数据保留和查询失败恢复；`store_sync` 验证同步状态读取、空记录与未知账号、NULL 与整数边界、数据保留和错误恢复。缓存写入、同步队列和数据目录写锁仍待实现。使用本机系统版本作为部署目标；当前命令行工具的 SDK 为 26.5，程序未验证对较旧 macOS 的兼容性。邮件解析和真实收信仍由后续任务验收。
+按 README 的 macOS 命令构建 `build/macos-debug`（Debug）和 `build/verify-sqlite-release`（Release），两种模式各 9 项 CTest 全部通过，构建无警告。`store` 验证数据库生命周期、约束与失败恢复；`store_list`、`store_find` 使用真实临时 SQLite 验证列表筛选与排序、详情与附件、ID 边界、只读访问、数据保留和查询失败恢复；`store_sync` 验证同步状态与待办查询、任务登记、UIDVALIDITY 变化及事务回滚；`store_write` 验证邮件与附件保存、稳定 ID、解析失败后重试、远端消失后停止重试、同步结果记录、重开持久性及写入失败回滚。数据目录写锁仍待实现。使用本机系统版本作为部署目标；当前命令行工具的 SDK 为 26.5，程序未验证对较旧 macOS 的兼容性。邮件解析和真实收信仍由后续任务验收。
 
 ## 此前 WSL Ubuntu 验证
 

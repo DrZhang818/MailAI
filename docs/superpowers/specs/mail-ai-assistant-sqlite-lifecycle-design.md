@@ -1,6 +1,6 @@
 # SQLite 版本 1 与数据库生命周期设计
 
-**状态：** 已按用户批准的单版本策略完成收敛，验收见[实施计划](../plans/mail-ai-assistant-sqlite-lifecycle.md)。账号 DDL 已恢复最初的版本 1 缩进，兼容性限制见第 4.1 节。此范围不代表 Task 2 整体完成。
+**状态：** 已按用户批准的单版本策略完成收敛，验收见[阶段 2 进度](../plans/phase-02-mail-sync/progress.md)。账号 DDL 已恢复最初的版本 1 缩进，兼容性限制见第 4.1 节。此范围不代表 Task 2 整体完成。
 
 **目标：** 为阶段 2 Task 2 建立可维护的数据库打开、空库初始化和版本 1 结构校验流程。一次成功的读写打开得到完整版本 1；失败能够定位，并保留已有业务数据。
 
@@ -8,7 +8,7 @@
 
 **技术栈：** C++23、SQLite 3.37+、CMake 3.20+、Ninja、CTest、macOS。沿用 `Result<T>`／`Status` 与现有 `SqliteStore` 公共接口，无新运行时依赖。
 
-**上位文档：** [整体设计](mail-ai-assistant-design.md) 第 2、3、7 节；[阶段 2 计划](../plans/mail-ai-assistant-stage-2.md) Task 2。本文细化其 SQLite 生命周期；后续实施计划引用本文，不复制全部设计。
+**上位文档：** [整体设计](mail-ai-assistant-design.md) 第 2、3、7 节；[阶段 2 计划](../plans/phase-02-mail-sync/plan.md) Task 2。本文细化其 SQLite 生命周期；阶段计划引用本文，不复制全部设计。
 
 ## 1. 现状与决策
 
@@ -210,7 +210,7 @@ schema 事务失败保证逻辑结构／版本／记录回滚，不保证已有�
 
 失败注入只配置测试拥有的原生连接并调用内部 helper，不向业务 API 增加测试开关，不依赖真实磁盘写满或不可移植的权限假设。参考 schema 不能作为唯一验收依据：测试还要独立断言表名、关键外键／唯一约束、账号保留、版本和事务失败结果。
 
-生命周期交付需要 Debug 和新 Release 构建目录的全套 CTest 均通过，并检查编译警告。实际命令、任务文件和执行顺序由审批后的实施计划给出。当前测试通过记录不等于本设计已实现；Task 2 的邮件读写、同步待办和写进程锁仍单独验收。
+生命周期交付需要 Debug 和新 Release 构建目录的全套 CTest 均通过，并检查编译警告。实施顺序见[阶段 2 计划](../plans/phase-02-mail-sync/plan.md) Task 2，构建命令见 [README](../../../README.md)，实际验收记录见[阶段 2 进度](../plans/phase-02-mail-sync/progress.md)。生命周期验收不能代替邮件读写、同步待办和写进程锁的验收。
 
 ## 9. 依据与限制
 
