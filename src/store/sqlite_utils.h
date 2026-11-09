@@ -2,9 +2,14 @@
 
 #include <sqlite3.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <variant>
 
 #include "mailai/model.h"
 
@@ -33,4 +38,40 @@ private:
     explicit Transaction(sqlite3* db) noexcept : db_(db) {}
     sqlite3* db_;
 };
+
+struct BlobView {
+    std::string_view bytes;
+};
+
+using SqlValue = std::variant<std::nullptr_t, std::int64_t, std::string_view, BlobView>;
+
+// Borrows the connection; shares SQLite mechanics and diagnostic context for one operation.
+class SqlContext {
+public:
+    SqlContext(sqlite3* db, std::string_view stage, std::optional<AccountId> account_id = {});
+
+    std::string_view stage() const noexcept {
+        return stage_;
+    }
+    std::unexpected<Error> fail(ErrorCode code, std::string_view message, std::optional<MailId> mail_id = {}) const;
+    std::unexpected<Error> fail(Error error) const;
+
+    Result<Statement> prepare(std::string_view sql, std::initializer_list<SqlValue> values = {}) const;
+    Status bind(const Statement& statement, int first_index, std::initializer_list<SqlValue> values) const;
+    // A successful false value means the query has reached SQLITE_DONE.
+    Result<bool> next(const Statement& statement) const;
+    Status finish(const Statement& statement) const;
+    // Execute a write, then reset it for reuse without clearing its bound values.
+    Status execute(const Statement& statement, std::initializer_list<SqlValue> values = {}) const;
+    Status execute(std::string_view sql, std::initializer_list<SqlValue> values = {}) const;
+    Result<Transaction> begin(TransactionMode mode) const;
+    Status commit(Transaction& transaction) const;
+
+private:
+    sqlite3* db_;
+    std::string stage_;
+    std::optional<AccountId> account_id_;
+};
+
+std::string column_text(sqlite3_stmt* statement, int column);
 }  // namespace mailai::store_detail

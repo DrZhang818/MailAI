@@ -39,19 +39,13 @@ public:
 
     Result<std::vector<RemoteKey>> pending(const AccountId& account_id, std::string_view folder);
 
-    Status schedule(const AccountId& account_id,
-        std::string_view folder,
-        const MailboxSnapshot& snapshot,
-        std::size_t initial_limit);
+    Status schedule(const AccountId& account_id, std::string_view folder, const MailboxSnapshot& snapshot, std::size_t initial_limit);
 
     Result<MailId> complete(const FetchedMail& mail, const Result<ParsedMail>& parsed);
 
     Status fail(const RemoteKey& key, const Error& error);
 
-    Status record_outcome(const AccountId& account_id,
-        std::string_view folder,
-        const Result<SyncSummary>& outcome,
-        std::int64_t attempted_at);
+    Status record_outcome(const AccountId& account_id, std::string_view folder, const Result<SyncSummary>& outcome, std::int64_t attempted_at);
 
 private:
     explicit SqliteStore(sqlite3* db) noexcept;

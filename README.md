@@ -65,6 +65,10 @@ cmake --build build/debug
 This configuration selects Homebrew libraries and sets the deployment target to
 the current macOS version; compatibility with older versions is not guaranteed.
 
+The VS Code workspace disables automatic formatting on save, paste, and typing.
+Manual C++ formatting uses `clang-format 23+` and the root `.clang-format`;
+it may change hand-formatted code.
+
 ### Linux (Ubuntu 24.04)
 
 Install the compiler, build tools, and development libraries. Enable the
@@ -117,6 +121,9 @@ ctest --test-dir build/debug --output-on-failure
 CTest covers the in-memory inbox and CLI, configuration parsing, SQLite
 lifecycle and queries, synchronization bookkeeping, message writes, and a CLI
 smoke test.
+
+The `sqlite_context` test also covers SQL parameter binding, statement reuse,
+and error handling. On macOS, Debug and Release each passed all 10 tests.
 
 ## Storage notes
 

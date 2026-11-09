@@ -13,7 +13,7 @@ namespace mailai::store_detail {
 namespace {
 // Preserve version 1 SQL text: SQLite stores its internal whitespace.
 constexpr std::array version_one_sql{
-    R"sql(CREATE TABLE accounts (
+R"sql(CREATE TABLE accounts (
                 id TEXT PRIMARY KEY NOT NULL,
                 display_name TEXT NOT NULL,
                 address TEXT NOT NULL,
@@ -23,7 +23,7 @@ constexpr std::array version_one_sql{
                 credential_env TEXT NOT NULL,
                 tls_mode TEXT NOT NULL
             );)sql",
-    R"sql(CREATE TABLE sync_state (
+R"sql(CREATE TABLE sync_state (
         account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
         folder TEXT NOT NULL CHECK(length(folder)>0),
         uid_validity INTEGER CHECK(uid_validity BETWEEN 1 AND 4294967295),
@@ -33,7 +33,7 @@ constexpr std::array version_one_sql{
         PRIMARY KEY(account_id,folder),
         CHECK(uid_validity IS NOT NULL OR last_discovered_uid=0)
     );)sql",
-    R"sql(CREATE TABLE sync_pending (
+R"sql(CREATE TABLE sync_pending (
         account_id TEXT NOT NULL,
         folder TEXT NOT NULL,
         uid_validity INTEGER NOT NULL CHECK(uid_validity BETWEEN 1 AND 4294967295),
@@ -46,7 +46,7 @@ constexpr std::array version_one_sql{
         FOREIGN KEY(account_id,folder) REFERENCES sync_state(account_id,folder) ON DELETE RESTRICT,
         CHECK(last_error_code IS NOT NULL OR (last_error_stage='' AND last_error_message=''))
     );)sql",
-    R"sql(CREATE TABLE messages (
+R"sql(CREATE TABLE messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
         folder TEXT NOT NULL CHECK(length(folder)>0),
@@ -67,7 +67,7 @@ constexpr std::array version_one_sql{
         CHECK((parse_state='parsed' AND parse_error='') OR
               (parse_state='failed' AND length(parse_error)>0 AND subject='(解析失败)' AND body=''))
     );)sql",
-    R"sql(CREATE TABLE attachments (
+R"sql(CREATE TABLE attachments (
         mail_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
         ordinal INTEGER NOT NULL CHECK(ordinal>=0),
         name TEXT NOT NULL,
@@ -76,7 +76,8 @@ constexpr std::array version_one_sql{
         PRIMARY KEY(mail_id,ordinal)
     );)sql",
     "CREATE INDEX messages_inbox_order ON messages(received_at_utc DESC,id ASC);",
-    "CREATE INDEX messages_account_order ON messages(account_id,received_at_utc DESC,id ASC);"};
+    "CREATE INDEX messages_account_order ON messages(account_id,received_at_utc DESC,id ASC);"
+};
 
 struct Object {
     std::string type;
@@ -88,64 +89,72 @@ struct Object {
 using Catalog = std::vector<Object>;
 
 Error schema_error(std::string message) {
-    return {ErrorCode::storage_error, std::move(message), std::nullopt, std::nullopt,
-            "storage.schema"};
+    return {
+        ErrorCode::storage_error, std::move(message), std::nullopt, std::nullopt, "storage.schema"
+    };
 }
-std::string text(sqlite3_stmt* statement, int column) {
-    const auto* value = sqlite3_column_text(statement, column);
-    return value ? std::string{reinterpret_cast<const char*>(value),
-                               static_cast<std::size_t>(sqlite3_column_bytes(statement, column))}
-                 : std::string{};
-}
+
 Result<Catalog> read_catalog(sqlite3* db) {
-    auto statement = prepare(db,
-                             "SELECT type,name,tbl_name,sql FROM main.sqlite_schema "
-                             "WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name",
-                             "storage.schema");
-    if (!statement)
-        return std::unexpected(statement.error());
+    const SqlContext sql{db, "storage.schema"};
+
+    auto statement = sql.prepare(
+        "SELECT type,name,tbl_name,sql FROM main.sqlite_schema "
+        "WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name");
+    if (!statement) return std::unexpected(statement.error());
+
     Catalog result;
-    int rc;
-    while ((rc = sqlite3_step(statement->get())) == SQLITE_ROW) {
-        Object object{text(statement->get(), 0), text(statement->get(), 1),
-                      text(statement->get(), 2), std::nullopt};
+    while (true) {
+        auto row = sql.next(*statement);
+        if (!row) return std::unexpected(row.error());
+        if (!*row) break;
+
+        Object object{
+            column_text(statement->get(), 0),
+            column_text(statement->get(), 1),
+            column_text(statement->get(), 2),
+            std::nullopt
+        };
+
         if (sqlite3_column_type(statement->get(), 3) != SQLITE_NULL)
-            object.sql = text(statement->get(), 3);
+            object.sql = column_text(statement->get(), 3);
+
         result.push_back(std::move(object));
     }
-    if (rc != SQLITE_DONE)
-        return std::unexpected(sqlite_error(db, rc, "storage.schema"));
     return result;
 }
+
 Result<Catalog> reference_catalog() {
     sqlite3* raw = nullptr;
     const int rc =
         sqlite3_open_v2(":memory:", &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> reference{raw, &sqlite3_close_v2};
-    if (rc != SQLITE_OK)
-        return std::unexpected(sqlite_error(raw, rc, "storage.schema"));
+    if (rc != SQLITE_OK) return std::unexpected(sqlite_error(raw, rc, "storage.schema"));
+
     for (const auto* sql : version_one_sql) {
         auto status = execute(raw, sql, "storage.schema");
-        if (!status)
-            return std::unexpected(status.error());
+        if (!status) return std::unexpected(status.error());
     }
     return read_catalog(raw);
 }
+
 Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
     std::size_t i = 0;
     while (i < actual.size() && i < expected.size() && actual[i] == expected[i]) ++i;
-    if (i == actual.size() && i == expected.size())
-        return {};
-    if (i == actual.size())
-        return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
-    if (i == expected.size())
-        return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
-    const auto actual_key = std::tie(actual[i].type, actual[i].name);
+
+    if (i == actual.size() && i == expected.size()) return {};
+
+    if (i == actual.size()) return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
+
+    if (i == expected.size()) return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
+
+    const auto actual_key   = std::tie(actual[i].type, actual[i].name);
     const auto expected_key = std::tie(expected[i].type, expected[i].name);
-    if (actual_key < expected_key)
-        return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
-    if (expected_key < actual_key)
-        return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
+
+    if (actual_key < expected_key) return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
+
+    if (expected_key < actual_key) return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
+
     return std::unexpected(schema_error("Schema definition mismatch: " + expected[i].name));
 }
 }  // namespace
@@ -153,48 +162,46 @@ Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
 Status ensure_schema(sqlite3* db, OpenMode mode) {
     auto transaction = Transaction::begin(
         db, mode == OpenMode::read_only ? TransactionMode::read : TransactionMode::write);
-    if (!transaction)
-        return std::unexpected(transaction.error());
+    if (!transaction) return std::unexpected(transaction.error());
+
     auto version = query_integer(db, "PRAGMA main.user_version", "storage.schema");
-    if (!version)
-        return std::unexpected(version.error());
+    if (!version) return std::unexpected(version.error());
     if (*version != 0 && *version != schema_version)
         return std::unexpected(
             schema_error("Unsupported database version: " + std::to_string(*version)));
 
     auto actual = read_catalog(db);
-    if (!actual)
-        return std::unexpected(actual.error());
+    if (!actual) return std::unexpected(actual.error());
 
     if (*version == 0) {
         if (!actual->empty())
             return std::unexpected(
                 schema_error("Cannot initialize a non-empty unversioned database"));
+
         if (mode == OpenMode::read_only)
             return std::unexpected(
                 schema_error("Database requires initialization with write access"));
+
         for (const auto* sql : version_one_sql) {
             auto created = execute(db, sql, "storage.initialize");
-            if (!created)
-                return created;
+            if (!created) return created;
         }
+
         actual = read_catalog(db);
-        if (!actual)
-            return std::unexpected(actual.error());
+        if (!actual) return std::unexpected(actual.error());
     }
 
     auto expected = reference_catalog();
-    if (!expected)
-        return std::unexpected(expected.error());
+    if (!expected) return std::unexpected(expected.error());
+
     auto valid = compare_catalogs(*actual, *expected);
-    if (!valid)
-        return valid;
+    if (!valid) return valid;
 
     if (*version == 0) {
         auto updated = execute(db, "PRAGMA main.user_version=1", "storage.initialize");
-        if (!updated)
-            return updated;
+        if (!updated) return updated;
     }
+
     return transaction->commit();
 }
 }  // namespace mailai::store_detail
