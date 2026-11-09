@@ -1,90 +1,137 @@
-# Mail AI Assistant
+# MailAI
 
-使用 C++23 开发的终端邮件 AI 助手。
+MailAI is a C++23 command-line mail assistant in development. Its current
+executable demonstrates browsing a small, in-memory set of fictional emails.
+The core library also contains SQLite storage and synchronization bookkeeping
+that are not yet connected to the command line.
 
-当前完成阶段 1：使用内存中的虚构邮件运行终端程序。
+## Current status
 
-阶段 2 已实现环境变量配置、共享类型、基础依赖、SQLite 数据库生命周期、本地邮件查询、同步任务登记、邮件与附件保存，以及失败和同步结果记录。数据目录写锁尚未实现；终端仍使用示例数据，尚未接入本地缓存和真实收信。
+The CLI can:
 
-- 列出全部邮件或按账号筛选。
-- 按接收时间降序、同时间 ID 升序排列。
-- 按稳定邮件 ID 查找详情。
-- 区分空结果、未知账号和无效邮件 ID。
-- 提供命令行帮助、参数校验和退出码。
+- List sample messages from all accounts or filter them by account.
+- Sort messages by receive time, newest first, with the mail ID as a tie-breaker.
+- Show a sample message by its ID.
+- Report invalid arguments, unknown accounts, and missing messages.
 
-成功展示邮件时标明“数据来源：示例”。示例账号为 `school` 和 `qq`，不代表已连接真实邮箱；终端的本地缓存读取和真实收信将在阶段 2 后续任务接入，AI 和回复功能属于后续阶段。
+The sample accounts, `school` and `qq`, do not connect to real mailboxes. The
+CLI labels successful message output as sample data and currently prints its
+message content and most diagnostics in Chinese.
 
-阶段目标与实施步骤见[阶段 1 计划](docs/superpowers/plans/phase-01-foundation/plan.md)和[阶段 2 计划](docs/superpowers/plans/phase-02-mail-sync/plan.md)；执行状态与验收记录分别见[阶段 1 进度](docs/superpowers/plans/phase-01-foundation/progress.md)和[阶段 2 进度](docs/superpowers/plans/phase-02-mail-sync/progress.md)。
+The core library provides environment-based configuration parsing and a SQLite
+store for accounts, messages, attachments, and synchronization state. The store
+can register pending messages, save fetched messages and parsing results, record
+failures and synchronization outcomes, and handle UIDVALIDITY changes. These
+are library capabilities, not CLI commands. Real IMAP fetching, MIME parsing,
+CLI access to the local store, AI features, and replies are not yet implemented.
+A data-directory write lock is also still pending.
 
-## 构建与测试
+## Build from source
 
-需要 macOS、支持 C++23 和 `std::expected` 的编译器及标准库、CMake 3.20+、Ninja，以及 SQLite、libcurl、GMime、libxml2 和 pkg-config。
+You need:
 
-核心接口统一使用 `Result<T> = std::expected<T, Error>` 返回业务结果；不返回数据的操作使用 `Status = Result<void>`。
+- A C++23 compiler and standard library with `std::expected` support.
+- CMake 3.20 or later, Ninja, and pkg-config.
+- SQLite 3.37 or later, libcurl 8.0 or later, GMime 3.2 or later, and
+  libxml2 2.9 or later.
 
-库的最低版本和实际验证结果见[依赖记录](docs/dependencies.md)。
+With Git installed, clone the repository first:
 
-使用 Homebrew 安装依赖（CMake 和 Apple 命令行开发工具须已安装）：
+```sh
+git clone https://github.com/DrZhang818/MailAI.git
+cd MailAI
+```
+
+### macOS
+
+The commands below use Homebrew and the Apple command-line developer tools.
+
+Install CMake if it is not already available, then install the remaining tools
+and libraries:
 
 ```sh
 brew install ninja pkgconf sqlite curl gmime libxml2 libffi
 ```
 
-代码格式化使用 `clang-format 23+`（`brew install clang-format`），规则见根目录 `.clang-format`。VS Code 工作区已指定 `/opt/homebrew/bin/clang-format`，保存 C++ 文件时自动格式化；长参数和初始化字段展开，短调用保持紧凑。
-
-在项目根目录的 macOS 终端执行：
+Configure and build:
 
 ```sh
-cmake -S . -B build/macos-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion)" \
   "-DCMAKE_PREFIX_PATH=$(brew --prefix libffi);$(brew --prefix sqlite);$(brew --prefix curl);$(brew --prefix libxml2);$(brew --prefix)"
-cmake --build build/macos-debug
-ctest --test-dir build/macos-debug --output-on-failure
+cmake --build build/debug
 ```
 
-命令将最低运行系统版本设为当前 macOS 版本，并显式选用 Homebrew 的库；生成的程序不保证可在较旧的 macOS 上运行。
+This configuration selects Homebrew libraries and sets the deployment target to
+the current macOS version; compatibility with older versions is not guaranteed.
 
-CTest 包含 `inbox`（内存查询）、`cli`（参数、展示与错误处理）、`config`（环境变量配置解析）、`store`（数据库生命周期、约束、恢复及账号配置）、`store_list`（SQLite 列表查询）、`store_find`（SQLite 详情与附件查询）、`store_sync`（同步状态、待办查询与任务登记）、`store_write`（邮件保存、失败记录与同步结果）和 `cli_smoke`（实际程序入口）。测试使用独立的条件检查，Release 模式下也会执行。
+### Linux (Ubuntu 24.04)
 
-数据库生命周期由核心库的 `SqliteStore::open` 提供，尚未接入 CLI。读写打开仅在空版本 0 上初始化完整版本 1，并启用外键和文件数据库 WAL；只读打开仅接受结构匹配的版本 1。非空版本 0 和其他不支持的版本均返回错误，保留原结构及数据。结构校验只兼容本项目已知的 DDL，手工改写的等价 SQL 也可能被拒绝；具体契约见[生命周期设计](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)。
-
-账号建表 SQL 使用最初的版本 1 缩进，以便打开对应数据库。使用提交 `d0c9410` 创建的数据库采用另一种缩进，当前会被拒绝打开，原结构和数据保留。
-
-`SqliteStore::list` 支持读取全部账号或指定账号的邮件列表，关联账号显示名称，按时间降序、同时间 ID 升序排序，并保留解析及历史状态。未知账号返回错误，已知空账号返回空列表；该接口尚未接入 CLI。
-
-`SqliteStore::find` 按本地 ID 返回完整邮件和按序号排列的附件信息。无附件仍成功；ID 为 0 返回参数错误，不存在或超过 SQLite 整数范围的 ID 返回未找到；该接口尚未接入 CLI。
-
-`SqliteStore::state` 按账号和文件夹读取同步状态；`pending` 返回当前 UIDVALIDITY 下仍需重试的邮件。`schedule` 在同一事务中登记待办并更新发现进度，UIDVALIDITY 变化时保留旧邮件为历史记录，并清除旧待办。
-
-`SqliteStore::complete` 在同一事务中保存邮件、替换附件并处理待办，重复保存同一封远端邮件时保留本地 ID。解析失败时保存原文和诊断；`fail` 记录抓取失败，确认远端邮件消失后停止重试；`record_outcome` 记录每轮尝试，仅在整轮成功时更新成功时间。当前 Debug／Release 各 9 项 CTest 通过，数据目录写锁仍待实现。
-
-## 使用
+Install the compiler, build tools, and development libraries. Enable the
+Ubuntu `universe` repository if `libgmime-3.0-dev` is not available.
 
 ```sh
-./build/macos-debug/mail_assistant --help
-./build/macos-debug/mail_assistant inbox
-./build/macos-debug/mail_assistant inbox --account school
-./build/macos-debug/mail_assistant show 43
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build pkg-config \
+  libsqlite3-dev libcurl4-openssl-dev libgmime-3.0-dev libxml2-dev
 ```
 
-`inbox --account all` 与 `inbox` 含义相同。`show` 使用邮件自身的 ID，不使用列表行号。ID 为十进制正整数，最大值为 `18446744073709551615`；ID 合法但查无邮件时返回运行失败。
-
-正常结果写 stdout，错误原因写 stderr。
-
-`--account` 需要非空值；缺少值或用另一选项代替值时，按参数错误处理。格式正确但不存在的账号仍属于查询失败。
-
-| 退出码 | 含义 | 示例 |
-|---|---|---|
-| 0 | 成功，包括帮助和空列表 | `inbox`、`show 43` |
-| 1 | 查询失败 | `inbox --account missing`、`show 999` |
-| 2 | 参数错误 | `show 42x`、`show 0`、`inbox --account` |
-
-## Release 验证
+Configure and build from the repository root:
 
 ```sh
-cmake -S . -B build/verify-stage1-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion)" \
-  "-DCMAKE_PREFIX_PATH=$(brew --prefix libffi);$(brew --prefix sqlite);$(brew --prefix curl);$(brew --prefix libxml2);$(brew --prefix)"
-cmake --build build/verify-stage1-release
-ctest --test-dir build/verify-stage1-release --output-on-failure
+cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/debug
 ```
+
+An earlier version of the project was built and tested on WSL Ubuntu, but the
+Ubuntu 24.04 instructions above have not yet been tested with the current code.
+Other distributions need equivalent packages that meet the minimum versions.
+See [dependency notes](docs/dependencies.md) for
+previously tested versions and platform details.
+
+## Try the CLI
+
+```sh
+./build/debug/mail_assistant --help
+./build/debug/mail_assistant inbox
+./build/debug/mail_assistant inbox --account school
+./build/debug/mail_assistant show 43
+```
+
+`inbox --account all` is equivalent to `inbox`. The `show` argument is the
+message ID, not a row number. It must be a positive decimal integer in the
+unsigned 64-bit range. Successful output goes to stdout; errors go to stderr.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Success, including help or an empty result |
+| 1 | Query or execution failure |
+| 2 | Invalid command-line arguments |
+
+## Run the tests
+
+```sh
+ctest --test-dir build/debug --output-on-failure
+```
+
+CTest covers the in-memory inbox and CLI, configuration parsing, SQLite
+lifecycle and queries, synchronization bookkeeping, message writes, and a CLI
+smoke test.
+
+## Storage notes
+
+`SqliteStore` is available through the core library but is not used by the
+current executable. Its schema validation accepts the project's known version 1
+DDL; manually rewritten equivalent SQL may be rejected. Databases created by
+commit `d0c9410` use different account-table formatting and are currently
+rejected without changing their structure or data. See the
+[SQLite lifecycle design](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)
+for the compatibility contract.
+
+## Project documentation
+
+- [Project design](docs/superpowers/specs/mail-ai-assistant-design.md)
+- [Foundation plan](docs/superpowers/plans/phase-01-foundation/plan.md) and
+  [progress](docs/superpowers/plans/phase-01-foundation/progress.md)
+- [Mail synchronization plan](docs/superpowers/plans/phase-02-mail-sync/plan.md)
+  and [progress](docs/superpowers/plans/phase-02-mail-sync/progress.md)
