@@ -24,7 +24,9 @@ can register pending messages, save fetched messages and parsing results, record
 failures and synchronization outcomes, and handle UIDVALIDITY changes. These
 are library capabilities, not CLI commands. Real IMAP fetching, MIME parsing,
 CLI access to the local store, AI features, and replies are not yet implemented.
-A data-directory write lock is also still pending.
+A move-only data-directory write lock is available through the core library,
+with bounded waits and automatic release. CLI integration is planned with the
+synchronization command.
 
 ## Build from source
 
@@ -123,7 +125,9 @@ lifecycle and queries, synchronization bookkeeping, message writes, and a CLI
 smoke test.
 
 The `sqlite_context` test also covers SQL parameter binding, statement reuse,
-and error handling. On macOS, Debug and Release each passed all 10 tests.
+and error handling. The `data_dir_lock` test covers process contention,
+timeouts, ownership transfer, release, and data preservation. On macOS, Debug
+and Release each passed all 11 tests. This version has not been tested on Linux.
 
 ## Storage notes
 
