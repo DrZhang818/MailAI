@@ -94,33 +94,20 @@ Error schema_error(std::string message) {
     };
 }
 
+Result<Object> decode_object(const SqlRow& row) {
+    Object object;
+    auto decoded = row.read(object.type, object.name, object.table, object.sql);
+    if (!decoded) return std::unexpected(decoded.error());
+    return object;
+}
+
 Result<Catalog> read_catalog(sqlite3* db) {
     const SqlContext sql{db, "storage.schema"};
-
-    auto statement = sql.prepare(
+    return sql.query_all(
         "SELECT type,name,tbl_name,sql FROM main.sqlite_schema "
-        "WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name");
-    if (!statement) return std::unexpected(statement.error());
-
-    Catalog result;
-    while (true) {
-        auto row = sql.next(*statement);
-        if (!row) return std::unexpected(row.error());
-        if (!*row) break;
-
-        Object object{
-            column_text(statement->get(), 0),
-            column_text(statement->get(), 1),
-            column_text(statement->get(), 2),
-            std::nullopt
-        };
-
-        if (sqlite3_column_type(statement->get(), 3) != SQLITE_NULL)
-            object.sql = column_text(statement->get(), 3);
-
-        result.push_back(std::move(object));
-    }
-    return result;
+        "WHERE name NOT IN ('sqlite_stat1','sqlite_stat4') ORDER BY type,name",
+        {}, decode_object
+    );
 }
 
 Result<Catalog> reference_catalog() {
@@ -131,8 +118,9 @@ Result<Catalog> reference_catalog() {
     const std::unique_ptr<sqlite3, decltype(&sqlite3_close_v2)> reference{raw, &sqlite3_close_v2};
     if (rc != SQLITE_OK) return std::unexpected(sqlite_error(raw, rc, "storage.schema"));
 
+    const SqlContext context{raw, "storage.schema"};
     for (const auto* sql : version_one_sql) {
-        auto status = execute(raw, sql, "storage.schema");
+        auto status = context.execute(sql);
         if (!status) return std::unexpected(status.error());
     }
     return read_catalog(raw);
@@ -160,11 +148,12 @@ Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
 }  // namespace
 
 Status ensure_schema(sqlite3* db, OpenMode mode) {
-    auto transaction = Transaction::begin(
-        db, mode == OpenMode::read_only ? TransactionMode::read : TransactionMode::write);
+    const SqlContext context{db, "storage.schema"};
+    auto transaction = context.begin(
+        mode == OpenMode::read_only ? TransactionMode::read : TransactionMode::write);
     if (!transaction) return std::unexpected(transaction.error());
 
-    auto version = query_integer(db, "PRAGMA main.user_version", "storage.schema");
+    auto version = context.query_integer("PRAGMA main.user_version");
     if (!version) return std::unexpected(version.error());
     if (*version != 0 && *version != schema_version)
         return std::unexpected(
@@ -173,6 +162,7 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
     auto actual = read_catalog(db);
     if (!actual) return std::unexpected(actual.error());
 
+    const SqlContext initialize{db, "storage.initialize"};
     if (*version == 0) {
         if (!actual->empty())
             return std::unexpected(
@@ -183,7 +173,7 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
                 schema_error("Database requires initialization with write access"));
 
         for (const auto* sql : version_one_sql) {
-            auto created = execute(db, sql, "storage.initialize");
+            auto created = initialize.execute(sql);
             if (!created) return created;
         }
 
@@ -198,10 +188,10 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
     if (!valid) return valid;
 
     if (*version == 0) {
-        auto updated = execute(db, "PRAGMA main.user_version=1", "storage.initialize");
+        auto updated = initialize.execute("PRAGMA main.user_version=1");
         if (!updated) return updated;
     }
 
-    return transaction->commit();
+    return context.commit(*transaction);
 }
 }  // namespace mailai::store_detail

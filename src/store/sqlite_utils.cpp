@@ -6,17 +6,6 @@
 #include <utility>
 
 namespace mailai::store_detail {
-namespace {
-Error diagnostic(std::string_view message, std::string_view stage) {
-    return {
-        ErrorCode::storage_error,
-        std::string{message},
-        std::nullopt,
-        std::nullopt,
-        std::string{stage}
-    };
-}
-}  // namespace
 
 Error sqlite_error(sqlite3* db, int rc, std::string_view stage) {
     const int primary = rc & 0xff;
@@ -31,65 +20,52 @@ Error sqlite_error(sqlite3* db, int rc, std::string_view stage) {
     };
 }
 
-Result<Statement> prepare(sqlite3* db, std::string_view sql, std::string_view stage) {
+Result<SqlContext::Statement> SqlContext::_prepare(std::string_view sql, std::initializer_list<SqlValue> values) const {
     if (sql.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        return std::unexpected(diagnostic("SQL statement exceeds SQLite size limit", stage));
+        return fail(ErrorCode::storage_error, "SQL statement exceeds SQLite size limit");
 
     sqlite3_stmt* raw = nullptr;
-    const int rc = sqlite3_prepare_v2(db, sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
+    const int rc = sqlite3_prepare_v2(db_, sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
     Statement statement{raw, &sqlite3_finalize};
-    if (rc != SQLITE_OK) return std::unexpected(sqlite_error(db, rc, stage));
-    if (!statement) return std::unexpected(diagnostic("SQL statement is empty", stage));
+    if (rc != SQLITE_OK) return fail(sqlite_error(db_, rc, stage_));
+    if (!statement) return fail(ErrorCode::storage_error, "SQL statement is empty");
+
+    auto bound = _bind(statement, 1, {values.begin(), values.size()});
+    if (!bound) return std::unexpected(bound.error());
 
     return statement;
 }
 
-Status execute(sqlite3* db, const char* sql, std::string_view stage) {
+Status Transaction::_execute(sqlite3* db, const char* sql) {
     const int rc = sqlite3_exec(db, sql, nullptr, nullptr, nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(sqlite_error(db, rc, stage));
+    if (rc != SQLITE_OK) return std::unexpected(sqlite_error(db, rc, "storage.transaction"));
 
     return {};
 }
 
-Result<std::int64_t> query_integer(sqlite3* db, const char* sql, std::string_view stage) {
-    auto statement = prepare(db, sql, stage);
-    if (!statement) return std::unexpected(statement.error());
+Result<std::int64_t> SqlContext::query_integer(std::string_view sql) const {
+    auto value = query_one(sql, {}, decode_scalar<std::int64_t>);
+    if (!value) return std::unexpected(value.error());
+    if (!*value) return fail(ErrorCode::storage_error, "Expected one integer result");
 
-    int rc = sqlite3_step(statement->get());
-    if (rc != SQLITE_ROW) {
-        if (rc != SQLITE_DONE) return std::unexpected(sqlite_error(db, rc, stage));
-        return std::unexpected(diagnostic("Expected one integer result", stage));
-    }
-
-    if (sqlite3_column_count(statement->get()) != 1 ||
-        sqlite3_column_type(statement->get(), 0) != SQLITE_INTEGER)
-        return std::unexpected(diagnostic("Expected one integer result", stage));
-
-    const auto value = sqlite3_column_int64(statement->get(), 0);
-    rc = sqlite3_step(statement->get());
-    if (rc != SQLITE_DONE) {
-        if (rc != SQLITE_ROW) return std::unexpected(sqlite_error(db, rc, stage));
-        return std::unexpected(diagnostic("Expected exactly one result row", stage));
-    }
-
-    return value;
+    return **value;
 }
 
 Status configure_connection(sqlite3* db) {
+    const SqlContext context{db, "storage.configure"};
     const int extended_rc = sqlite3_extended_result_codes(db, 1);
     if (extended_rc != SQLITE_OK) return std::unexpected(sqlite_error(db, extended_rc, "storage.configure"));
 
     const int timeout_rc = sqlite3_busy_timeout(db, 1000);
     if (timeout_rc != SQLITE_OK) return std::unexpected(sqlite_error(db, timeout_rc, "storage.configure"));
 
-    auto enabled = execute(db, "PRAGMA foreign_keys=ON", "storage.configure");
+    auto enabled = context.execute("PRAGMA foreign_keys=ON");
     if (!enabled) return enabled;
 
-    auto value = query_integer(db, "PRAGMA foreign_keys", "storage.configure");
+    auto value = context.query_integer("PRAGMA foreign_keys");
     if (!value) return std::unexpected(value.error());
     if (*value != 1)
-        return std::unexpected(
-            diagnostic("SQLite foreign keys could not be enabled", "storage.configure"));
+        return context.fail(ErrorCode::storage_error, "SQLite foreign keys could not be enabled");
 
     return {};
 }
@@ -99,30 +75,19 @@ Status configure_wal(sqlite3* db) {
     if (!filename || *filename == '\0')
         return {};  // In-memory or temporary database.
 
-    auto statement = prepare(db, "PRAGMA main.journal_mode=WAL", "storage.configure");
-    if (!statement) return std::unexpected(statement.error());
-
-    const int rc = sqlite3_step(statement->get());
-    if (rc != SQLITE_ROW) {
-        if (rc != SQLITE_DONE) return std::unexpected(sqlite_error(db, rc, "storage.configure"));
-        return std::unexpected(
-            diagnostic("SQLite did not return a journal mode", "storage.configure"));
-    }
-
-    const auto* value = sqlite3_column_text(statement->get(), 0);
-    if (!value || std::string_view{reinterpret_cast<const char*>(value)} != "wal")
-        return std::unexpected(
-            diagnostic("SQLite WAL mode could not be enabled", "storage.configure"));
-
-    const int finish_rc = sqlite3_step(statement->get());
-    if (finish_rc != SQLITE_DONE) return std::unexpected(sqlite_error(db, finish_rc, "storage.configure"));
+    const SqlContext context{db, "storage.configure"};
+    auto value = context.query_one("PRAGMA main.journal_mode=WAL", {}, decode_scalar<std::string>);
+    if (!value) return std::unexpected(value.error());
+    if (!*value) return context.fail(ErrorCode::storage_error, "SQLite did not return a journal mode");
+    if (**value != "wal") return context.fail(ErrorCode::storage_error, "SQLite WAL mode could not be enabled");
 
     return {};
 }
 
+Transaction::Transaction(sqlite3* db) noexcept : db_(db) {}
+
 Result<Transaction> Transaction::begin(sqlite3* db, TransactionMode mode) {
-    auto status = execute(
-        db, mode == TransactionMode::write ? "BEGIN IMMEDIATE" : "BEGIN", "storage.transaction");
+    auto status = _execute(db, mode == TransactionMode::write ? "BEGIN IMMEDIATE" : "BEGIN");
     if (!status) return std::unexpected(status.error());
 
     return Transaction{db};
@@ -136,36 +101,89 @@ Transaction::~Transaction() {
 }
 
 Status Transaction::commit() {
-    auto status = execute(db_, "COMMIT", "storage.transaction");
+    auto status = _execute(db_, "COMMIT");
     if (status)
         db_ = nullptr;
     return status;
 }
 
-SqlContext::SqlContext(sqlite3* db, std::string_view stage, std::optional<AccountId> account_id)
-    : db_(db), stage_(stage), account_id_(std::move(account_id)) {}
+SqlRow::SqlRow(sqlite3_stmt* statement, const SqlContext& context)
+    : statement_(statement), context_(context) {}
+
+std::unexpected<Error> SqlRow::fail(std::string_view message) const {
+    return context_.fail(ErrorCode::storage_error, message);
+}
+
+Status SqlRow::column(int index, std::int64_t& value) const {
+    if (sqlite3_column_type(statement_, index) != SQLITE_INTEGER)
+        return fail("Expected an INTEGER SQL value at column " + std::to_string(index));
+
+    value = sqlite3_column_int64(statement_, index);
+    return {};
+}
+
+Status SqlRow::column(int index, std::uint64_t& value) const {
+    std::int64_t integer{};
+    auto decoded = column(index, integer);
+    if (!decoded) return decoded;
+    if (integer < 0) return fail("Expected a nonnegative SQL integer at column " + std::to_string(index));
+
+    value = static_cast<std::uint64_t>(integer);
+    return {};
+}
+
+Status SqlRow::column(int index, std::uint32_t& value) const {
+    std::uint64_t integer{};
+    auto decoded = column(index, integer);
+    if (!decoded) return decoded;
+    if (integer > std::numeric_limits<std::uint32_t>::max())
+        return fail("SQL integer exceeds the UID range at column " + std::to_string(index));
+
+    value = static_cast<std::uint32_t>(integer);
+    return {};
+}
+
+Status SqlRow::column(int index, bool& value) const {
+    std::int64_t integer{};
+    auto decoded = column(index, integer);
+    if (!decoded) return decoded;
+    if (integer != 0 && integer != 1) return fail("Expected a SQL boolean at column " + std::to_string(index));
+
+    value = integer != 0;
+    return {};
+}
+
+Status SqlRow::column(int index, std::string& value) const {
+    if (sqlite3_column_type(statement_, index) != SQLITE_TEXT)
+        return fail("Expected a TEXT SQL value at column " + std::to_string(index));
+
+    const auto* text = sqlite3_column_text(statement_, index);
+    if (!text) return fail("Could not read a TEXT SQL value");
+
+    value.assign(reinterpret_cast<const char*>(text), sqlite3_column_bytes(statement_, index));
+    return {};
+}
+
+SqlContext::SqlContext(
+    sqlite3* db,
+    std::string_view stage,
+    std::optional<AccountId> account_id,
+    std::optional<MailId> mail_id
+) : db_(db), stage_(stage), account_id_(std::move(account_id)), mail_id_(mail_id) {}
 
 std::unexpected<Error> SqlContext::fail(ErrorCode code, std::string_view message, std::optional<MailId> mail_id) const {
-    return std::unexpected(Error{code, std::string{message}, account_id_, mail_id, stage_});
+    return std::unexpected(Error{code, std::string{message}, account_id_, mail_id ? mail_id : mail_id_, stage_});
 }
 
 std::unexpected<Error> SqlContext::fail(Error error) const {
     if (account_id_)
         error.account_id = account_id_;
+    if (mail_id_)
+        error.mail_id = mail_id_;
     return std::unexpected(std::move(error));
 }
 
-Result<Statement> SqlContext::prepare(std::string_view sql, std::initializer_list<SqlValue> values) const {
-    auto statement = store_detail::prepare(db_, sql, stage_);
-    if (!statement) return fail(statement.error());
-
-    auto bound = bind(*statement, 1, values);
-    if (!bound) return std::unexpected(bound.error());
-
-    return statement;
-}
-
-Status SqlContext::bind(const Statement& statement, int first_index, std::initializer_list<SqlValue> values) const {
+Status SqlContext::_bind(const Statement& statement, int first_index, std::span<const SqlValue> values) const {
     int index = first_index;
     for (const auto& value : values) {
         const int rc = std::visit(
@@ -201,24 +219,22 @@ Status SqlContext::bind(const Statement& statement, int first_index, std::initia
     return {};
 }
 
-Result<bool> SqlContext::next(const Statement& statement) const {
+Result<bool> SqlContext::_next(const Statement& statement) const {
     const int rc = sqlite3_step(statement.get());
     if (rc == SQLITE_ROW) return true;
     if (rc == SQLITE_DONE) return false;
     return fail(sqlite_error(db_, rc, stage_));
 }
 
-Status SqlContext::finish(const Statement& statement) const {
+Status SqlContext::_finish(const Statement& statement) const {
     const int rc = sqlite3_step(statement.get());
+    if (rc == SQLITE_ROW) return fail(ErrorCode::storage_error, "Unexpected additional SQL result row");
     if (rc != SQLITE_DONE) return fail(sqlite_error(db_, rc, stage_));
     return {};
 }
 
-Status SqlContext::execute(const Statement& statement, std::initializer_list<SqlValue> values) const {
-    auto bound = bind(statement, 1, values);
-    if (!bound) return bound;
-
-    auto done = finish(statement);
+Status SqlContext::_execute(const Statement& statement) const {
+    auto done = _finish(statement);
     if (!done) return done;
 
     const int rc = sqlite3_reset(statement.get());
@@ -228,10 +244,10 @@ Status SqlContext::execute(const Statement& statement, std::initializer_list<Sql
 }
 
 Status SqlContext::execute(std::string_view sql, std::initializer_list<SqlValue> values) const {
-    auto statement = prepare(sql, values);
+    auto statement = _prepare(sql, values);
     if (!statement) return std::unexpected(statement.error());
 
-    return execute(*statement);
+    return _execute(*statement);
 }
 
 Result<Transaction> SqlContext::begin(TransactionMode mode) const {
@@ -248,10 +264,8 @@ Status SqlContext::commit(Transaction& transaction) const {
     return {};
 }
 
-std::string column_text(sqlite3_stmt* statement, int column) {
-    const auto* value = sqlite3_column_text(statement, column);
-    return value ? std::string{reinterpret_cast<const char*>(value),
-                               static_cast<std::size_t>(sqlite3_column_bytes(statement, column))}
-                 : std::string{};
+int SqlContext::changes() const {
+    return sqlite3_changes(db_);
 }
+
 }  // namespace mailai::store_detail

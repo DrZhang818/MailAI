@@ -181,8 +181,13 @@ void test_attachment_query_failure_and_recovery() {
 void test_invalid_stored_fields() {
     for (const auto* mutation :
         {"UPDATE messages SET uid=0 WHERE id=42",
+            "UPDATE messages SET uid=1.5 WHERE id=42",
             "UPDATE messages SET uid_validity=4294967296 WHERE id=42",
             "UPDATE messages SET parse_state='invalid' WHERE id=42",
+            "UPDATE messages SET received_at_utc='broken' WHERE id=42",
+            "UPDATE messages SET historical=2 WHERE id=42",
+            "UPDATE attachments SET size_bytes='broken' WHERE mail_id=42 AND ordinal=2",
+            "UPDATE attachments SET size_bytes=1.5 WHERE mail_id=42 AND ordinal=2",
             "UPDATE attachments SET size_bytes=-1 WHERE mail_id=42 AND ordinal=2"}) {
         TempDirectory directory;
         const auto path = directory.path() / "invalid.sqlite3";

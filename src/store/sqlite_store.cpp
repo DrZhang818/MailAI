@@ -5,10 +5,14 @@
 
 #include "mailai/store.h"
 #include "schema.h"
+#include "sqlite_rows.h"
 #include "sqlite_utils.h"
 
 namespace mailai {
-using store_detail::column_text;
+using store_detail::decode_attachment;
+using store_detail::decode_inbox_item;
+using store_detail::decode_mail;
+using store_detail::decode_scalar;
 using store_detail::SqlContext;
 
 SqliteStore::SqliteStore(sqlite3* db) noexcept : db_(db) {}
@@ -91,7 +95,7 @@ Status SqliteStore::ensure_account(const Account& account, const ImapSettings& i
     );
     if (!saved) return saved;
 
-    if (sqlite3_changes(db_) == 0)
+    if (context.changes() == 0)
         return context.fail(
             ErrorCode::config_error, "Account IMAP identity does not match saved settings");
 
@@ -99,20 +103,16 @@ Status SqliteStore::ensure_account(const Account& account, const ImapSettings& i
 }
 
 Result<std::vector<InboxItem>> SqliteStore::list(const InboxQuery& query) {
-    constexpr std::string_view stage = "storage.list";
-    const SqlContext context{db_, stage};
+    const SqlContext context{db_, "storage.list", query.account_id};
     auto transaction = context.begin(store_detail::TransactionMode::read);
     if (!transaction) return std::unexpected(transaction.error());
 
     if (query.account_id) {
-        auto account = context.prepare("SELECT 1 FROM accounts WHERE id=?1", {*query.account_id});
+        auto account = context.query_one(
+            "SELECT 1 FROM accounts WHERE id=?1", {*query.account_id}, decode_scalar<std::int64_t>
+        );
         if (!account) return std::unexpected(account.error());
-
-        auto found = context.next(*account);
-        if (!found) return std::unexpected(found.error());
-        if (!*found)
-            return SqlContext{db_, stage, query.account_id}.fail(
-                ErrorCode::unknown_account, "账号不存在");
+        if (!*account) return context.fail(ErrorCode::unknown_account, "账号不存在");
     }
 
     std::string sql = R"sql(
@@ -125,37 +125,9 @@ Result<std::vector<InboxItem>> SqliteStore::list(const InboxQuery& query) {
         sql += " WHERE m.account_id = ?1";
     sql += " ORDER BY m.received_at_utc DESC, m.id ASC";
 
-    auto statement = context.prepare(sql);
-    if (!statement) return std::unexpected(statement.error());
-
-    if (query.account_id) {
-        auto bound = context.bind(*statement, 1, {*query.account_id});
-        if (!bound) return std::unexpected(bound.error());
-    }
-
-    std::vector<InboxItem> items;
-    while (true) {
-        auto row = context.next(*statement);
-        if (!row) return std::unexpected(row.error());
-        if (!*row) break;
-
-        const auto id    = sqlite3_column_int64(statement->get(), 0);
-        const auto state = column_text(statement->get(), 6);
-        if (id <= 0 || (state != "parsed" && state != "failed"))
-            return SqlContext{db_, stage, query.account_id}.fail(
-                ErrorCode::storage_error, "Invalid stored mail fields");
-
-        items.emplace_back(
-            static_cast<MailId>(id),
-            column_text(statement->get(), 1),
-            column_text(statement->get(), 2),
-            column_text(statement->get(), 3),
-            column_text(statement->get(), 4),
-            sqlite3_column_int64(statement->get(), 5),
-            state == "parsed" ? ParseState::parsed : ParseState::failed,
-            sqlite3_column_int(statement->get(), 7) != 0
-        );
-    }
+    auto items = query.account_id ? context.query_all(sql, {*query.account_id}, decode_inbox_item)
+                                 : context.query_all(sql, {}, decode_inbox_item);
+    if (!items) return std::unexpected(items.error());
 
     auto committed = context.commit(*transaction);
     if (!committed) return std::unexpected(committed.error());
@@ -164,7 +136,7 @@ Result<std::vector<InboxItem>> SqliteStore::list(const InboxQuery& query) {
 }
 
 Result<Mail> SqliteStore::find(MailId id) {
-    const SqlContext context{db_, "storage.find"};
+    const SqlContext context{db_, "storage.find", {}, id};
     if (id == 0) return context.fail(ErrorCode::invalid_argument, "邮件 ID 必须大于 0", id);
     if (id > static_cast<MailId>(std::numeric_limits<std::int64_t>::max())) return context.fail(ErrorCode::mail_not_found, "邮件不存在", id);
 
@@ -179,41 +151,12 @@ Result<Mail> SqliteStore::find(MailId id) {
         WHERE id = ?1
     )sql";
 
-    auto statement = context.prepare(sql, {static_cast<std::int64_t>(id)});
-    if (!statement) return std::unexpected(statement.error());
-
-    auto found = context.next(*statement);
+    auto found = context.query_one(sql, {static_cast<std::int64_t>(id)}, decode_mail);
     if (!found) return std::unexpected(found.error());
     if (!*found) return context.fail(ErrorCode::mail_not_found, "邮件不存在", id);
 
-    const auto validity = sqlite3_column_int64(statement->get(), 6);
-    const auto uid      = sqlite3_column_int64(statement->get(), 7);
-    const auto max_uid  = static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max());
-    const auto state    = column_text(statement->get(), 8);
-    if (validity < 1 || validity > max_uid || uid < 1 || uid > max_uid ||
-        (state != "parsed" && state != "failed")) {
-        return context.fail(ErrorCode::storage_error, "Invaild stored mail fields", id);
-    }
-
-    Mail mail;
-    mail.id              = id;
-    mail.account_id      = column_text(statement->get(), 0);
-    mail.sender          = column_text(statement->get(), 1);
-    mail.subject         = column_text(statement->get(), 2);
-    mail.body            = column_text(statement->get(), 3);
-    mail.received_at_utc = sqlite3_column_int64(statement->get(), 4);
-    mail.folder          = column_text(statement->get(), 5);
-    mail.uid_validity    = static_cast<std::uint32_t>(validity);
-    mail.uid             = static_cast<std::uint32_t>(uid);
-    mail.parse_state     = state == "parsed" ? ParseState::parsed : ParseState::failed;
-    mail.parse_error     = column_text(statement->get(), 9);
-    mail.historical      = sqlite3_column_int(statement->get(), 10) != 0;
-    mail.message_id      = column_text(statement->get(), 11);
-    mail.in_reply_to     = column_text(statement->get(), 12);
-    mail.references      = column_text(statement->get(), 13);
-
-    auto finished = context.finish(*statement);
-    if (!finished) return std::unexpected(finished.error());
+    Mail mail = std::move(**found);
+    mail.id = id;
 
     constexpr const char* attachment_sql = R"sql(
         SELECT name, media_type, size_bytes
@@ -222,23 +165,9 @@ Result<Mail> SqliteStore::find(MailId id) {
         ORDER BY ordinal ASC
     )sql";
 
-    auto attachments = context.prepare(attachment_sql, {static_cast<std::int64_t>(id)});
+    auto attachments = context.query_all(attachment_sql, {static_cast<std::int64_t>(id)}, decode_attachment);
     if (!attachments) return std::unexpected(attachments.error());
-
-    while (true) {
-        auto row = context.next(*attachments);
-        if (!row) return std::unexpected(row.error());
-        if (!*row) break;
-
-        const auto size = sqlite3_column_int64(attachments->get(), 2);
-        if (size < 0) return context.fail(ErrorCode::storage_error, "Invalid stored attachment size", id);
-
-        mail.attachments.push_back(AttachmentInfo{
-            column_text(attachments->get(), 0),
-            column_text(attachments->get(), 1),
-            static_cast<std::uint64_t>(size)
-        });
-    }
+    mail.attachments = std::move(*attachments);
 
     auto committed = context.commit(*transaction);
     if (!committed) return std::unexpected(committed.error());

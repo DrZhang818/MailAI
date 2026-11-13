@@ -131,6 +131,28 @@ and Release each passed all 11 tests. This version has not been tested on Linux.
 
 ## Storage notes
 
+Storage operations share `SqlContext` for parameter binding, query execution,
+and error context. Its `query_one` and `query_all` operations use named decoders
+to turn SQL rows into owned C++ values. `SqlRow` checks column types, NULLs,
+integer ranges, and booleans before copying those values. Business mappings
+live in [`sqlite_rows.cpp`](src/store/sqlite_rows.cpp).
+
+The SQL interface is declared in `sqlite_utils.h`, template definitions live
+in `sqlite_utils.hpp`, and ordinary functions are implemented in
+`sqlite_utils.cpp`. Callers pass SQL and parameter values to the execution and
+query operations. `execute_many` takes common parameters and a range of per-row
+parameters, prepares once, and reuses the statement for the batch. Each row
+supplies all remaining parameters. The caller owns the surrounding transaction.
+The statement handle and its preparation, binding, and stepping helpers are
+private. The private `_prepare` operation prepares SQL and binds the initial
+parameters together. Schema initialization uses the shared SQL context.
+
+The public store methods coordinate transactions and business steps. Message
+completion saves the message, replaces its attachments, and updates its pending
+job within one transaction. Discovery similarly groups mailbox-range changes,
+the discovery cursor, and new jobs. Shared sync-state reads use the calling
+operation's error context.
+
 `SqliteStore` is available through the core library but is not used by the
 current executable. Its schema validation accepts the project's known version 1
 DDL; manually rewritten equivalent SQL may be rejected. Databases created by

@@ -27,6 +27,7 @@ add_library(mailai_core STATIC
     src/store/sqlite_sync.cpp
     src/store/sqlite_write.cpp
     src/store/sqlite_utils.cpp
+    src/store/sqlite_rows.cpp
     src/store/schema.cpp
 )
 

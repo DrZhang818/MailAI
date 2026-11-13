@@ -1,26 +1,26 @@
+#include <array>
 #include <limits>
+#include <ranges>
 #include <string_view>
 #include <utility>
 
 #include "mailai/store.h"
+#include "sqlite_sync.h"
 #include "sqlite_utils.h"
 
 namespace mailai {
 using store_detail::BlobView;
 using store_detail::SqlContext;
+using store_detail::SqlValue;
 
 namespace {
 bool valid_key(const RemoteKey& key) {
     return !key.account_id.empty() && !key.folder.empty() && key.uid_validity != 0 && key.uid != 0;
 }
 
-Status require_current_key(SqliteStore& store, const RemoteKey& key, const SqlContext& context) {
-    auto state = store.state(key.account_id, key.folder);
-    if (!state) {
-        auto error = state.error();
-        error.stage = std::string{context.stage()};
-        return context.fail(std::move(error));
-    }
+Status require_current_key(const RemoteKey& key, const SqlContext& context) {
+    auto state = store_detail::load_sync_state(context, key.account_id, key.folder);
+    if (!state) return std::unexpected(state.error());
     if (!state->uid_validity || *state->uid_validity != key.uid_validity)
         return context.fail(
             ErrorCode::invalid_argument, "Remote key does not match the current mailbox state");
@@ -54,11 +54,8 @@ std::string_view error_name(ErrorCode code) {
     }
     return {};
 }
-}  // namespace
 
-Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<ParsedMail>& parsed) {
-    const auto& remote = mail.key;
-    const SqlContext context{db_, "storage.complete", remote.account_id};
+Status validate_completion(const SqlContext& context, const RemoteKey& remote, const Result<ParsedMail>& parsed) {
     if (!valid_key(remote)) return context.fail(ErrorCode::invalid_argument, "Invalid remote mail key");
     if (!parsed &&
         (parsed.error().code != ErrorCode::parse_error || parsed.error().message.empty())) {
@@ -76,12 +73,11 @@ Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<Parse
         }
     }
 
-    auto transaction = context.begin(store_detail::TransactionMode::write);
-    if (!transaction) return std::unexpected(transaction.error());
+    return {};
+}
 
-    auto current = require_current_key(*this, remote, context);
-    if (!current) return std::unexpected(current.error());
-
+Result<MailId> save_message(const SqlContext& context, const FetchedMail& mail, const Result<ParsedMail>& parsed) {
+    const auto& remote = mail.key;
     constexpr const char* save_sql = R"sql(
         INSERT INTO messages (
             account_id, folder, uid_validity, uid, sender, subject, body,
@@ -121,46 +117,49 @@ Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<Parse
     );
     if (!saved) return std::unexpected(saved.error());
 
-    auto lookup = context.prepare(
+    auto found = context.query_one(
         "SELECT id FROM messages WHERE account_id=?1 AND folder=?2 "
         "AND uid_validity=?3 AND uid=?4",
-        {remote.account_id, remote.folder, remote.uid_validity, remote.uid});
-    if (!lookup) return std::unexpected(lookup.error());
-
-    auto found = context.next(*lookup);
+        {remote.account_id, remote.folder, remote.uid_validity, remote.uid},
+        store_detail::decode_scalar<MailId>
+    );
     if (!found) return std::unexpected(found.error());
     if (!*found) return context.fail(ErrorCode::storage_error, "Saved mail was not found");
+    if (**found == 0) return context.fail(ErrorCode::storage_error, "Invalid stored mail ID");
 
-    const auto local_id = sqlite3_column_int64(lookup->get(), 0);
-    if (sqlite3_column_type(lookup->get(), 0) != SQLITE_INTEGER || local_id <= 0)
-        return context.fail(ErrorCode::storage_error, "Invalid stored mail ID");
+    return **found;
+}
 
-    auto finished = context.finish(*lookup);
-    if (!finished) return std::unexpected(finished.error());
-
+Status replace_attachments(const SqlContext& context, std::int64_t local_id, const ParsedMail* value) {
     auto removed = context.execute("DELETE FROM attachments WHERE mail_id=?1", {local_id});
     if (!removed) return std::unexpected(removed.error());
 
-    if (value && !value->attachments.empty()) {
-        auto attachment = context.prepare(
-            "INSERT INTO attachments "
-            "(mail_id,ordinal,name,media_type,size_bytes) VALUES (?1,?2,?3,?4,?5)");
-        if (!attachment) return std::unexpected(attachment.error());
+    if (!value || value->attachments.empty()) return {};
 
-        for (std::size_t ordinal = 0; ordinal < value->attachments.size(); ++ordinal) {
-            const auto& item = value->attachments[ordinal];
-            auto added = context.execute(
-                *attachment,
-                {
-                    local_id,
-                    static_cast<std::int64_t>(ordinal),
-                    item.name,
-                    item.media_type,
-                    static_cast<std::int64_t>(item.size_bytes)
-                }
-            );
-            if (!added) return std::unexpected(added.error());
-        }
+    auto ordinals = std::views::iota(std::size_t{0}, value->attachments.size());
+    auto rows = ordinals | std::views::transform([&](std::size_t ordinal) {
+        const auto& item = value->attachments[ordinal];
+        return std::array<SqlValue, 4>{
+            static_cast<std::int64_t>(ordinal),
+            item.name,
+            item.media_type,
+            static_cast<std::int64_t>(item.size_bytes)
+        };
+    });
+    return context.execute_many(
+        "INSERT INTO attachments "
+        "(mail_id,ordinal,name,media_type,size_bytes) VALUES (?1,?2,?3,?4,?5)",
+        {local_id}, rows
+    );
+}
+
+Status update_pending_after_parse(const SqlContext& context, const RemoteKey& remote, const Result<ParsedMail>& parsed) {
+    if (parsed) {
+        return context.execute(
+            "DELETE FROM sync_pending WHERE account_id=?1 AND folder=?2 AND "
+            "uid_validity=?3 AND uid=?4",
+            {remote.account_id, remote.folder, remote.uid_validity, remote.uid}
+        );
     }
 
     constexpr const char* parse_failure_sql = R"sql(
@@ -173,25 +172,37 @@ Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<Parse
             last_error_stage = excluded.last_error_stage,
             last_error_message = excluded.last_error_message
     )sql";
-    auto job =
-        context.prepare(value ? "DELETE FROM sync_pending WHERE account_id=?1 AND folder=?2 AND "
-                                "uid_validity=?3 AND uid=?4"
-                              : parse_failure_sql,
-            {remote.account_id, remote.folder, remote.uid_validity, remote.uid});
-    if (!job) return std::unexpected(job.error());
+    return context.execute(
+        parse_failure_sql,
+        {remote.account_id, remote.folder, remote.uid_validity, remote.uid, parsed.error().stage, parsed.error().message}
+    );
+}
+}  // namespace
 
-    if (!value) {
-        auto bound = context.bind(*job, 5, {parsed.error().stage, parsed.error().message});
-        if (!bound) return std::unexpected(bound.error());
-    }
+Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<ParsedMail>& parsed) {
+    const SqlContext context{db_, "storage.complete", mail.key.account_id};
+    auto valid = validate_completion(context, mail.key, parsed);
+    if (!valid) return std::unexpected(valid.error());
 
-    auto completed = context.execute(*job);
-    if (!completed) return std::unexpected(completed.error());
+    auto transaction = context.begin(store_detail::TransactionMode::write);
+    if (!transaction) return std::unexpected(transaction.error());
+
+    auto current = require_current_key(mail.key, context);
+    if (!current) return std::unexpected(current.error());
+
+    auto saved = save_message(context, mail, parsed);
+    if (!saved) return std::unexpected(saved.error());
+
+    auto attachments = replace_attachments(context, static_cast<std::int64_t>(*saved), parsed ? &*parsed : nullptr);
+    if (!attachments) return std::unexpected(attachments.error());
+
+    auto pending = update_pending_after_parse(context, mail.key, parsed);
+    if (!pending) return std::unexpected(pending.error());
 
     auto committed = context.commit(*transaction);
     if (!committed) return std::unexpected(committed.error());
 
-    return static_cast<MailId>(local_id);
+    return *saved;
 }
 
 Status SqliteStore::fail(const RemoteKey& key, const Error& error) {
@@ -204,7 +215,7 @@ Status SqliteStore::fail(const RemoteKey& key, const Error& error) {
     auto transaction = context.begin(store_detail::TransactionMode::write);
     if (!transaction) return std::unexpected(transaction.error());
 
-    auto current = require_current_key(*this, key, context);
+    auto current = require_current_key(key, context);
     if (!current) return current;
 
     constexpr const char* sql = R"sql(
@@ -217,7 +228,7 @@ Status SqliteStore::fail(const RemoteKey& key, const Error& error) {
         {key.account_id, key.folder, key.uid_validity, key.uid, name, error.stage, error.message});
     if (!updated) return updated;
 
-    if (sqlite3_changes(db_) == 0) return context.fail(ErrorCode::invalid_argument, "Pending job was not found");
+    if (context.changes() == 0) return context.fail(ErrorCode::invalid_argument, "Pending job was not found");
     return context.commit(*transaction);
 }
 
@@ -235,12 +246,8 @@ Status SqliteStore::record_outcome(
     auto transaction = context.begin(store_detail::TransactionMode::write);
     if (!transaction) return std::unexpected(transaction.error());
 
-    auto current = state(account_id, folder);
-    if (!current) {
-        auto error = current.error();
-        error.stage = std::string{context.stage()};
-        return context.fail(std::move(error));
-    }
+    auto current = store_detail::load_sync_state(context, account_id, folder);
+    if (!current) return std::unexpected(current.error());
 
     constexpr const char* sql = R"sql(
         INSERT INTO sync_state(account_id, folder, last_attempt_at, last_success_at)

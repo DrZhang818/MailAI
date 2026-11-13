@@ -216,6 +216,10 @@ void test_sqlite_errors_are_reported_and_transactions_end() {
 void test_invalid_rows_do_not_return_partial_results() {
     for (const auto* mutation :
         {"UPDATE messages SET id=-7 WHERE id=7",
+            "UPDATE messages SET received_at_utc='broken' WHERE id=7",
+            "UPDATE messages SET received_at_utc=1.5 WHERE id=7",
+            "PRAGMA ignore_check_constraints=ON; "
+            "UPDATE messages SET historical=2 WHERE id=7",
             "PRAGMA ignore_check_constraints=ON; "
             "UPDATE messages SET parse_state='invalid' WHERE id=7"}) {
         TempDirectory directory;
