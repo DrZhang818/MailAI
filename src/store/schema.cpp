@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -79,12 +80,23 @@ R"sql(CREATE TABLE attachments (
     "CREATE INDEX messages_account_order ON messages(account_id,received_at_utc DESC,id ASC);"
 };
 
+// SQLite catalog text for the accounts table shipped in d0c9410.
+constexpr std::string_view alternate_accounts_schema = R"sql(CREATE TABLE accounts (
+        id TEXT PRIMARY KEY NOT NULL,
+        display_name TEXT NOT NULL,
+        address TEXT NOT NULL,
+        imap_host TEXT NOT NULL,
+        imap_port INTEGER NOT NULL,
+        imap_username TEXT NOT NULL,
+        credential_env TEXT NOT NULL,
+        tls_mode TEXT NOT NULL
+    ))sql";
+
 struct Object {
     std::string type;
     std::string name;
     std::string table;
     std::optional<std::string> sql;
-    bool operator==(const Object&) const = default;
 };
 using Catalog = std::vector<Object>;
 
@@ -126,9 +138,19 @@ Result<Catalog> reference_catalog() {
     return read_catalog(raw);
 }
 
+bool matches_object(const Object& actual, const Object& expected) {
+    if (actual.type != expected.type || actual.name != expected.name ||
+        actual.table != expected.table) {
+        return false;
+    }
+    return actual.sql == expected.sql ||
+           (actual.type == "table" && actual.name == "accounts" &&
+            actual.sql == alternate_accounts_schema);
+}
+
 Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
     std::size_t i = 0;
-    while (i < actual.size() && i < expected.size() && actual[i] == expected[i]) ++i;
+    while (i < actual.size() && i < expected.size() && matches_object(actual[i], expected[i])) ++i;
 
     if (i == actual.size() && i == expected.size()) return {};
 

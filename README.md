@@ -139,8 +139,8 @@ live in [`sqlite_rows.cpp`](src/store/sqlite_rows.cpp).
 
 The SQL interface is declared in `sqlite_utils.h`, template definitions live
 in `sqlite_utils.hpp`, and ordinary functions are implemented in
-`sqlite_utils.cpp`. Callers pass SQL and parameter values to the execution and
-query operations. `execute_many` takes common parameters and a range of per-row
+`sqlite_utils.cpp`. Single statements require a value for each parameter slot.
+Pass `nullptr` to bind SQL NULL. `execute_many` takes common parameters and per-row
 parameters, prepares once, and reuses the statement for the batch. Each row
 supplies all remaining parameters. The caller owns the surrounding transaction.
 The statement handle and its preparation, binding, and stepping helpers are
@@ -155,9 +155,9 @@ operation's error context.
 
 `SqliteStore` is available through the core library but is not used by the
 current executable. Its schema validation accepts the project's known version 1
-DDL; manually rewritten equivalent SQL may be rejected. Databases created by
-commit `d0c9410` use different account-table formatting and are currently
-rejected without changing their structure or data. See the
+DDL, including the account-table formatting shipped in commit `d0c9410`.
+Both layouts open with their existing schema and data. Other SQL formatting
+may be rejected. See the
 [SQLite lifecycle design](docs/superpowers/specs/mail-ai-assistant-sqlite-lifecycle-design.md)
 for the compatibility contract.
 

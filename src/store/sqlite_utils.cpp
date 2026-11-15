@@ -20,7 +20,9 @@ Error sqlite_error(sqlite3* db, int rc, std::string_view stage) {
     };
 }
 
-Result<SqlContext::Statement> SqlContext::_prepare(std::string_view sql, std::initializer_list<SqlValue> values) const {
+Result<SqlContext::Statement> SqlContext::_prepare(
+    std::string_view sql, std::initializer_list<SqlValue> values, BindMode bind_mode
+) const {
     if (sql.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return fail(ErrorCode::storage_error, "SQL statement exceeds SQLite size limit");
 
@@ -29,6 +31,12 @@ Result<SqlContext::Statement> SqlContext::_prepare(std::string_view sql, std::in
     Statement statement{raw, &sqlite3_finalize};
     if (rc != SQLITE_OK) return fail(sqlite_error(db_, rc, stage_));
     if (!statement) return fail(ErrorCode::storage_error, "SQL statement is empty");
+
+    const auto parameter_count = static_cast<std::size_t>(sqlite3_bind_parameter_count(raw));
+    if (values.size() > parameter_count ||
+        (bind_mode == BindMode::complete && values.size() != parameter_count)) {
+        return fail(ErrorCode::storage_error, "Values do not match SQL parameter count");
+    }
 
     auto bound = _bind(statement, 1, {values.begin(), values.size()});
     if (!bound) return std::unexpected(bound.error());

@@ -41,6 +41,8 @@ public:
 
     Status schedule(const AccountId& account_id, std::string_view folder, const MailboxSnapshot& snapshot, std::size_t initial_limit);
 
+    // A returned ID confirms persistence, including when a parse error was saved.
+    // Count the message as synchronized only when parsing and persistence both succeed.
     Result<MailId> complete(const FetchedMail& mail, const Result<ParsedMail>& parsed);
 
     Status fail(const RemoteKey& key, const Error& error);

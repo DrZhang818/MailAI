@@ -9,7 +9,7 @@ template <std::ranges::input_range Rows>
 Status SqlContext::execute_many(
     std::string_view sql, std::initializer_list<SqlValue> common, Rows&& rows
 ) const {
-    auto statement = _prepare(sql, common);
+    auto statement = _prepare(sql, common, BindMode::prefix);
     if (!statement) return std::unexpected(statement.error());
 
     const auto parameter_count = static_cast<std::size_t>(sqlite3_bind_parameter_count(statement->get()));

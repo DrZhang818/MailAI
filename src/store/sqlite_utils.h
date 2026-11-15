@@ -93,6 +93,7 @@ public:
     std::unexpected<Error> fail(ErrorCode code, std::string_view message, std::optional<MailId> mail_id = {}) const;
     std::unexpected<Error> fail(Error error) const;
 
+    // Single statements require all parameter slots. Use nullptr to bind SQL NULL.
     Status execute(std::string_view sql, std::initializer_list<SqlValue> values = {}) const;
 
     // Prepare once, bind common parameters once, then fill the remaining parameters per row.
@@ -125,9 +126,14 @@ public:
     ) const;
 
 private:
+    enum class BindMode { complete, prefix };
     using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
 
-    Result<Statement> _prepare(std::string_view sql, std::initializer_list<SqlValue> values) const;
+    Result<Statement> _prepare(
+        std::string_view sql,
+        std::initializer_list<SqlValue> values,
+        BindMode bind_mode = BindMode::complete
+    ) const;
     Status _bind(const Statement& statement, int first_index, std::span<const SqlValue> values) const;
     // A successful false value means the query has reached SQLITE_DONE.
     Result<bool> _next(const Statement& statement) const;

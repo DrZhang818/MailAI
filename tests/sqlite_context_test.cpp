@@ -47,6 +47,26 @@ void test_values_are_copied_and_preserve_sqlite_types() {
         "binding must preserve complete bytes, SQLite types and integer values");
 }
 
+void test_single_statements_require_every_parameter() {
+    Database db(":memory:");
+    db.execute("CREATE TABLE samples(id INTEGER PRIMARY KEY, value TEXT)");
+    const SqlContext sql{db.get(), "storage.test", "school"};
+    constexpr auto insert = "INSERT INTO samples VALUES (?1,?2)";
+    constexpr auto query = "SELECT id FROM samples WHERE value IS ?1";
+
+    auto incomplete_write = sql.execute(insert, {1});
+    expect(!incomplete_write, "a missing write parameter must be rejected");
+    expect_failure(incomplete_write, "storage.test");
+    expect(db.integer("SELECT count(*) FROM samples") == 0,
+        "rejecting an incomplete write must leave the table unchanged");
+
+    expect(sql.execute(insert, {1, nullptr}).has_value(), "explicit NULL should be accepted");
+    expect_failure(sql.query_one(query, {}, decode_scalar<std::int64_t>), "storage.test");
+    expect_failure(sql.query_all(query, {}, decode_scalar<std::int64_t>), "storage.test");
+    auto found = sql.query_one(query, {nullptr}, decode_scalar<std::int64_t>);
+    expect(found && *found && **found == 1, "an explicit NULL query should return the saved row");
+}
+
 void test_batch_prepares_once_and_copies_common_parameters() {
     Database db(":memory:");
     db.execute("CREATE TABLE jobs(scope TEXT NOT NULL, uid INTEGER PRIMARY KEY)");
@@ -215,6 +235,7 @@ void test_typed_queries_reject_bad_rows_and_extra_results() {
 int main() {
     try {
         test_values_are_copied_and_preserve_sqlite_types();
+        test_single_statements_require_every_parameter();
         test_batch_prepares_once_and_copies_common_parameters();
         test_batch_row_shape_and_transaction_recovery();
         test_query_and_execution_errors_keep_context();
