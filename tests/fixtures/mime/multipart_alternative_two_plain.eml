@@ -1,0 +1,24 @@
+From: Test Sender <sender@example.test>
+To: Test Recipient <recipient@example.test>
+Date: Mon, 16 Nov 2026 10:00:00 +0800
+Message-ID: <multipart-alternative-two-plain@example.test>
+Subject: =?UTF-8?B?5Lya6K6u5o+Q6YaS?=
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="meeting-versions"
+
+--meeting-versions
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+请参加会议。
+--meeting-versions
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+请在下午三点参加会议。
+--meeting-versions
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<p>请在下午三点参加会议。</p><p>请提前阅读议程。</p>
+--meeting-versions--

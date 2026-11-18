@@ -1,0 +1,26 @@
+From: Test Sender <sender@example.test>
+To: Test Recipient <recipient@example.test>
+Date: Mon, 16 Nov 2026 10:00:00 +0800
+Message-ID: <multipart-mixed-text-attachment@example.test>
+Subject: =?UTF-8?B?5Lya6K6u5o+Q6YaS?=
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="meeting-parts"
+
+--meeting-parts
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Content-Disposition: inline
+
+请在下午三点参加会议。
+--meeting-parts
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+Content-Disposition: attachment; filename="notes.txt"
+
+这是附件里的备忘。
+--meeting-parts
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+会议地点是 301 教室。
+--meeting-parts--

@@ -1,0 +1,13 @@
+From: =?UTF-8?B?5Y+R5Lu25Lq6?= <sender@example.test>
+To: Test Recipient <recipient@example.test>
+Date: Mon, 16 Nov 2026 10:00:00 +0800
+Subject: =?UTF-8?B?5Lya6K6u5o+Q6YaS?=
+Message-ID: <reply@example.test>
+In-Reply-To: <parent@example.test>
+References: <root@example.test>
+ <parent@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+请在下午三点参加会议。
