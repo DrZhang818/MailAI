@@ -103,7 +103,7 @@ void read_message_headers(GMimeMessage* message, ParsedMail& result) {
     if (const char* message_id = g_mime_object_get_header(message_object, "Message-ID")) {
         result.message_id = message_id;
     }
-    if (const char* in_reply_to = g_mime_object_get_header(message_object, "In-Reply-to")) {
+    if (const char* in_reply_to = g_mime_object_get_header(message_object, "In-Reply-To")) {
         result.in_reply_to = in_reply_to;
     }
     if (const char* references = g_mime_object_get_header(message_object, "References")) {
