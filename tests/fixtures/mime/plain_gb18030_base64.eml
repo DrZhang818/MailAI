@@ -1,0 +1,10 @@
+From: Test Sender <sender@example.test>
+To: Test Recipient <recipient@example.test>
+Date: Mon, 16 Nov 2026 10:00:00 +0800
+Message-ID: <plain-gb18030-base64@example.test>
+Subject: =?UTF-8?B?5Lya6K6u5o+Q6YaS?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=GB18030
+Content-Transfer-Encoding: base64
+
+x+vU2s/CzufI/bXjss6807vh0umhow==

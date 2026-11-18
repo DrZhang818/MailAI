@@ -1,7 +1,8 @@
 {
     "configurations": [
         {
-            "name": "Linux",
+            "name": "MailAI",
+            "compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
             "includePath": [
                 "${workspaceFolder}/**"
             ],

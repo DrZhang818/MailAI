@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(mail_ai_assistant LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(Threads REQUIRED)
 
 find_package(SQLite3 3.37 REQUIRED)
@@ -22,6 +24,7 @@ find_package(LibXml2 2.9 REQUIRED)
 add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
+    src/mail/mime.cpp
     src/store/data_dir_lock.cpp
     src/store/sqlite_store.cpp
     src/store/sqlite_sync.cpp
@@ -92,6 +95,10 @@ add_executable(data_dir_lock_test
     tests/data_dir_lock_test.cpp
 )
 
+add_executable(mime_test
+    tests/mime_test.cpp
+)
+
 target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
 target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(store_list_test PRIVATE SQLite3::SQLite3)
@@ -115,6 +122,7 @@ foreach(mailai_target IN ITEMS
     store_write_test
     sqlite_context_test
     data_dir_lock_test
+    mime_test
 )
     target_link_libraries(${mailai_target} PRIVATE mailai_core)
 endforeach()
@@ -139,6 +147,7 @@ foreach(mailai_target IN ITEMS
     store_write_test
     sqlite_context_test
     data_dir_lock_test
+    mime_test
 )
     set_target_properties(${mailai_target} PROPERTIES
         CXX_STANDARD 23
@@ -165,6 +174,10 @@ add_test(NAME store_write COMMAND store_write_test)
 add_test(NAME sqlite_context COMMAND sqlite_context_test)
 add_test(NAME data_dir_lock COMMAND data_dir_lock_test)
 set_tests_properties(data_dir_lock PROPERTIES TIMEOUT 15)
+add_test(NAME mime
+    COMMAND mime_test
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime"
+)
 
 add_test(NAME cli_smoke
     COMMAND "${CMAKE_COMMAND}"
