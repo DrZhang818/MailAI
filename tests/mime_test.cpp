@@ -1,5 +1,6 @@
 #include "mailai/mime.h"
 
+#include <cstddef>
 #include <exception>
 #include <fstream>
 #include <iostream>
@@ -13,16 +14,20 @@
 
 namespace {
 
-mailai::ParsedMail parse_sample(const char* filename) {
-    std::ifstream input(filename, std::ios::binary);
-    expect(input.is_open(), "could not open sample");
-    const std::string raw{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
-
+mailai::ParsedMail parse_raw(std::string_view raw) {
     auto result = mailai::parse_message(raw);
     if (!result) {
         throw std::runtime_error("expected successful MIME parsing: " + result.error().message);
     }
     return std::move(*result);
+}
+
+mailai::ParsedMail parse_sample(const char* filename) {
+    std::ifstream input(filename, std::ios::binary);
+    expect(input.is_open(), "could not open sample");
+    const std::string raw{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+
+    return parse_raw(raw);
 }
 
 void expect_plain_message(const char* filename, std::string_view expected_body) {
@@ -52,6 +57,116 @@ void expect_missing_headers(const char* filename) {
         mail.body == "这封邮件只有正文。\n", "missing headers should still allow reading the body");
 }
 
+void expect_html_text(std::string_view html, std::string_view expected) {
+    std::string raw = "Content-Type: text/html; charset=UTF-8\n\n";
+    raw += html;
+    const auto mail = mailai::parse_message(raw);
+    expect(mail.has_value(), "HTML mail should parse successfully");
+    expect(mail->body == expected, "HTML text should match the expected UTF-8 bytes");
+}
+
+void expect_parse_error(std::string_view raw, std::string_view reason) {
+    const auto result = mailai::parse_message(raw);
+    expect(!result, "invalid MIME message should fail");
+    expect(result.error().code == mailai::ErrorCode::parse_error, "expected parse_error");
+    expect(result.error().stage == "mime.parse", "expected MIME parsing error stage");
+    if (result.error().message.find(reason) == std::string::npos) {
+        throw std::runtime_error("unexpected parse error: " + result.error().message);
+    }
+}
+
+void expect_nested_multipart() {
+    const auto mail = parse_raw(
+        "MIME-Version: 1.0\n"
+        "Content-Type: multipart/mixed; boundary=outer\n\n"
+        "--outer\n"
+        "Content-Type: multipart/alternative; boundary=inner\n\n"
+        "--inner\n"
+        "Content-Type: text/plain; charset=UTF-8\n\n旧版本\n"
+        "--inner\n"
+        "Content-Type: text/plain; charset=UTF-8\n\n第一段\n"
+        "--inner\n"
+        "Content-Type: text/html; charset=UTF-8\n\n<p>HTML版本</p>\n"
+        "--inner--\n"
+        "--outer\n"
+        "Content-Type: application/octet-stream\n"
+        "Content-Disposition: attachment; filename*=UTF-8''%E9%99%84%E4%BB%B6.bin\n"
+        "Content-Transfer-Encoding: base64\n\nAAEC/w==\n"
+        "--outer\n"
+        "Content-Type: multipart/mixed; boundary=second\n\n"
+        "--second\n"
+        "Content-Type: text/plain; charset=UTF-8\n\n第二段\n"
+        "--second\n"
+        "Content-Type: text/plain; charset=UTF-8\n"
+        "Content-Disposition: attachment; filename=note.txt\n"
+        "Content-Transfer-Encoding: quoted-printable\n\n=E4=B8=AD\n"
+        "--second--\n"
+        "--outer\n"
+        "Content-Type: application/octet-stream; name=legacy.bin\n"
+        "Content-Transfer-Encoding: base64\n\nYQ==\n"
+        "--outer\n"
+        "Content-Type: image/png\n"
+        "Content-Disposition: inline; filename=inline.png\n"
+        "Content-Transfer-Encoding: base64\n\nYQ==\n"
+        "--outer\n"
+        "Content-Type: application/octet-stream\n"
+        "Content-Disposition: attachment\n"
+        "Content-Transfer-Encoding: base64\n\nYWI=\n"
+        "--outer--\n");
+
+    expect(mail.body == "第一段\n第二段", "nested plain-text parts should be selected in order");
+    expect(mail.attachments.size() == 4, "should collect attachments, not inline resources");
+    const auto& attachments = mail.attachments;
+    expect(attachments[0].name == "附件.bin" &&
+               attachments[0].media_type == "application/octet-stream" &&
+               attachments[0].size_bytes == 4,
+        "should decode the attachment filename and count decoded binary bytes");
+    expect(attachments[1].name == "note.txt" && attachments[1].media_type == "text/plain" &&
+               attachments[1].size_bytes == 3,
+        "should collect nested text attachments and count quoted-printable decoded bytes");
+    expect(attachments[2].name == "legacy.bin" &&
+               attachments[2].media_type == "application/octet-stream" &&
+               attachments[2].size_bytes == 1,
+        "should recognize an attachment named by Content-Type");
+    expect(attachments[3].name.empty() && attachments[3].media_type == "application/octet-stream" &&
+               attachments[3].size_bytes == 2,
+        "should allow an unnamed attachment");
+}
+
+void expect_raw_size_limit() {
+    constexpr std::size_t max_size = 20 * 1024 * 1024;
+    const std::string header = "Content-Type: text/plain; charset=UTF-8\n\n";
+    std::string raw = header;
+    raw.resize(max_size, 'a');
+    const auto mail = parse_raw(raw);
+    expect(mail.body.size() == max_size - header.size(), "should parse exactly 20 MiB");
+    raw.push_back('a');
+    expect_parse_error(raw, "size limit");
+}
+
+std::string nested_message(std::size_t depth) {
+    std::string raw = "MIME-Version: 1.0\n";
+    for (std::size_t i = 1; i < depth; ++i) {
+        const auto boundary = "nest-" + std::to_string(i) + "-end";
+        raw += "Content-Type: multipart/mixed; boundary=" + boundary + "\n\n--" + boundary + "\n";
+    }
+    raw += "Content-Type: text/plain; charset=UTF-8\n\n正文\n";
+    for (std::size_t i = depth - 1; i > 0; --i) {
+        raw += "--nest-" + std::to_string(i) + "-end--\n";
+    }
+    return raw;
+}
+
+std::string multipart_message(std::size_t total_parts) {
+    // The root multipart counts as one part, including all unselected alternatives.
+    std::string raw = "Content-Type: multipart/alternative; boundary=parts\n\n";
+    for (std::size_t i = 1; i < total_parts; ++i) {
+        raw += "--parts\nContent-Type: text/plain; charset=UTF-8\n\n正文\n";
+    }
+    raw += "--parts--\n";
+    return raw;
+}
+
 }  // namespace
 
 int main() {
@@ -76,6 +191,62 @@ int main() {
 
         current_sample = "headers_reply.eml";
         expect_reply_headers(current_sample);
+
+        current_sample = "HTML whitespace";
+        expect_html_text(
+            "<body>\n  <p>  Hello <span>world</span> \n <b>again</b>!</p>\n"
+            "<p>second<br> \n third<br><br> fourth</p>\n</body>",
+            "Hello world again!\nsecond\nthird\n\nfourth\n");
+
+        current_sample = "HTML blocks and pre";
+        expect_html_text(
+            "<h1>Title</h1><h6>Sub</h6><blockquote>quote</blockquote>"
+            "<pre>  x \n    <b>y </b></pre><p> end </p>",
+            "Title\nSub\nquote\n  x \n    y \nend\n");
+
+        current_sample = "HTML table cells";
+        expect_html_text(
+            "<table><tr><th> A </th>\n <th>B</th></tr>"
+            "<tr><td><p>C</p></td><td><p>D</p></td></tr>"
+            "<tr><td>E</td><td></td></tr><tr><td></td><td>F</td></tr></table>",
+            "A\tB\nC\tD\nE\t\n\tF\n");
+
+        current_sample = "HTML hidden subtrees and useful fallback text";
+        expect_html_text(
+            "<html><head><title>ignore</title></head><body><p>正文</p>"
+            "<template><p>ignore</p></template><script>ignore</script><style>ignore</style>"
+            "<noscript>备用</noscript><svg><text>图</text></svg></body></html>",
+            "正文\n备用图");
+
+        current_sample = "HTML significant whitespace";
+        expect_html_text("<p>甲<span> </span><b>乙</b>&nbsp;丙</p>", "甲 乙\u00a0丙\n");
+
+        current_sample = "nested multipart and attachment metadata";
+        expect_nested_multipart();
+
+        current_sample = "quoted-printable UTF-8 body";
+        expect(parse_raw("Content-Type: text/plain; charset=UTF-8\n"
+                         "Content-Transfer-Encoding: quoted-printable\n\n=E4=BD=A0=E5=A5=BD")
+                       .body == "你好",
+            "should decode a quoted-printable Chinese body");
+
+        current_sample = "unsupported plain-text and HTML charsets";
+        expect_parse_error(
+            "Content-Type: text/plain; charset=x-mailai-unknown\n\nHello", "charset");
+        expect_parse_error(
+            "Content-Type: text/html; charset=x-mailai-unknown\n\n<p>Hello</p>", "charset");
+        expect_plain_message("plain_utf8.eml", "请在下午三点参加会议。\n");
+
+        current_sample = "raw size boundary";
+        expect_raw_size_limit();
+
+        current_sample = "MIME depth boundary";
+        expect(parse_raw(nested_message(32)).body == "正文", "should allow 32 MIME levels");
+        expect_parse_error(nested_message(33), "depth limit");
+
+        current_sample = "MIME part count boundary";
+        expect(parse_raw(multipart_message(256)).body == "正文", "should allow 256 MIME parts");
+        expect_parse_error(multipart_message(257), "part count limit");
     } catch (const std::exception& error) {
         std::cerr << current_sample << ": " << error.what() << '\n';
         return 1;
