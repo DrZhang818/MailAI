@@ -12,7 +12,7 @@ if(NOT TARGET SQLite3::SQLite3)
     add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
 endif()
 
-find_package(CURL 8.0 REQUIRED)
+find_package(CURL 8.17.0 REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 
@@ -20,10 +20,14 @@ pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET "gmime-3.0>=3.2")
 
 find_package(LibXml2 2.9 REQUIRED)
 
-# Core library and its public requirements.
+find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+
+# 核心库及其公开依赖。
 add_library(mailai_core STATIC
     src/app/inbox.cpp
     src/config.cpp
+    src/mail/imap.cpp
+    src/mail/imap_protocol.cpp
     src/mail/mime.cpp
     src/store/data_dir_lock.cpp
     src/store/sqlite_store.cpp
@@ -48,7 +52,7 @@ target_include_directories(mailai_core PUBLIC
 
 target_compile_features(mailai_core PUBLIC cxx_std_23)
 
-# Application and test executables.
+# 应用程序和测试程序。
 add_executable(mail_assistant
     src/main.cpp
     src/cli.cpp
@@ -99,6 +103,28 @@ add_executable(mime_test
     tests/mime_test.cpp
 )
 
+add_executable(imap_connection_test
+    tests/imap_connection_test.cpp
+)
+
+add_executable(imap_snapshot_test
+    tests/imap_snapshot_test.cpp
+)
+
+add_executable(imap_internal_date_test
+    tests/imap_internal_date_test.cpp
+)
+
+add_executable(imap_fetch_protocol_test
+    tests/imap_fetch_protocol_test.cpp
+)
+
+target_link_libraries(imap_connection_test PRIVATE CURL::libcurl)
+target_include_directories(imap_connection_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(imap_snapshot_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(imap_internal_date_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(imap_fetch_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
 target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(store_list_test PRIVATE SQLite3::SQLite3)
@@ -109,7 +135,7 @@ target_link_libraries(sqlite_context_test PRIVATE SQLite3::SQLite3)
 target_include_directories(sqlite_context_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(data_dir_lock_test PRIVATE SQLite3::SQLite3 Threads::Threads)
 
-# Executables consume the core library's public requirements.
+# 可执行程序继承核心库的公开依赖。
 foreach(mailai_target IN ITEMS
     mail_assistant
     inbox_test
@@ -123,6 +149,10 @@ foreach(mailai_target IN ITEMS
     sqlite_context_test
     data_dir_lock_test
     mime_test
+    imap_connection_test
+    imap_snapshot_test
+    imap_internal_date_test
+    imap_fetch_protocol_test
 )
     target_link_libraries(${mailai_target} PRIVATE mailai_core)
 endforeach()
@@ -133,7 +163,7 @@ foreach(mailai_target IN ITEMS mail_assistant cli_test)
     )
 endforeach()
 
-# Shared settings for this project's targets.
+# 项目各构建目标的公共配置。
 foreach(mailai_target IN ITEMS
     mailai_core
     mail_assistant
@@ -148,6 +178,10 @@ foreach(mailai_target IN ITEMS
     sqlite_context_test
     data_dir_lock_test
     mime_test
+    imap_connection_test
+    imap_snapshot_test
+    imap_internal_date_test
+    imap_fetch_protocol_test
 )
     set_target_properties(${mailai_target} PROPERTIES
         CXX_STANDARD 23
@@ -160,7 +194,7 @@ foreach(mailai_target IN ITEMS
     )
 endforeach()
 
-# CTest registration.
+# 注册 CTest 测试。
 enable_testing()
 
 add_test(NAME inbox COMMAND inbox_test)
@@ -177,6 +211,40 @@ set_tests_properties(data_dir_lock PROPERTIES TIMEOUT 15)
 add_test(NAME mime
     COMMAND mime_test
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime"
+)
+add_test(NAME imap_fixture
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_fixture_test.py"
+)
+set_tests_properties(imap_fixture PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    TIMEOUT 30
+)
+add_test(NAME imap_connection
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_connection_test.py"
+        "$<TARGET_FILE:imap_connection_test>"
+)
+set_tests_properties(imap_connection PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    TIMEOUT 60
+)
+add_test(NAME imap_snapshot COMMAND imap_snapshot_test)
+add_test(NAME imap_internal_date COMMAND imap_internal_date_test)
+add_test(NAME imap_fetch_protocol COMMAND imap_fetch_protocol_test)
+add_test(NAME imap_fetch
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_fetch_test.py"
+        "$<TARGET_FILE:imap_connection_test>"
+)
+set_tests_properties(imap_fetch PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    TIMEOUT 60
+)
+add_test(NAME imap_retry
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_retry_test.py"
+        "$<TARGET_FILE:imap_connection_test>"
+)
+set_tests_properties(imap_retry PROPERTIES
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    TIMEOUT 120
 )
 
 add_test(NAME cli_smoke

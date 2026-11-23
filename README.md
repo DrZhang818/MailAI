@@ -34,7 +34,7 @@ You need:
 
 - A C++23 compiler and standard library with `std::expected` support.
 - CMake 3.20 or later, Ninja, and pkg-config.
-- SQLite 3.37 or later, libcurl 8.0 or later, GMime 3.2 or later, and
+- SQLite 3.37 or later, libcurl 8.17.0 or later, GMime 3.2 or later, and
   libxml2 2.9 or later.
 
 With Git installed, clone the repository first:
@@ -52,7 +52,7 @@ Install CMake if it is not already available, then install the remaining tools
 and libraries:
 
 ```sh
-brew install ninja pkgconf sqlite curl gmime libxml2 libffi
+brew install ninja pkgconf sqlite curl gmime libxml2 libffi python openssl
 ```
 
 Configure and build:
@@ -79,7 +79,7 @@ Ubuntu `universe` repository if `libgmime-3.0-dev` is not available.
 ```sh
 sudo apt update
 sudo apt install -y build-essential cmake ninja-build pkg-config \
-  libsqlite3-dev libcurl4-openssl-dev libgmime-3.0-dev libxml2-dev
+  libsqlite3-dev libcurl4-openssl-dev libgmime-3.0-dev libxml2-dev python3 openssl
 ```
 
 Configure and build from the repository root:
@@ -126,8 +126,24 @@ smoke test.
 
 The `sqlite_context` test also covers SQL parameter binding, statement reuse,
 and error handling. The `data_dir_lock` test covers process contention,
-timeouts, ownership transfer, release, and data preservation. On macOS, Debug
-and Release each passed all 11 tests. This version has not been tested on Linux.
+timeouts, ownership transfer, release, and data preservation. The `mime` test
+checks synthetic messages and parsing limits. The `imap_fixture` test uses
+Python 3.8+ and the `openssl` command to generate temporary certificates and
+start a loopback-only TLS IMAP server with synthetic messages; it never connects
+to a real mailbox. The `imap_connection` test uses the C++ libcurl handle to
+check both TLS modes, authentication and certificate validation. The
+`imap_snapshot` test checks the parsed UIDVALIDITY and UID list. The
+`imap_internal_date` and `imap_fetch` tests verify reception timestamps, exact
+message bytes, read-only fetching, remote identity checks, transfer errors and
+the 20 MiB download limit. The `imap_fetch_protocol` test exercises literal
+reassembly, attribute ordering, incomplete responses and error precedence
+without a network connection. The `imap_retry` test checks reconnects and at most
+two retries for transient errors, with delays of one and two seconds. Each
+attempt uses a new connection, and downloads recheck UIDVALIDITY before
+fetching. On macOS with Homebrew libcurl 8.23.0, Debug and Release each passed
+all 19 tests. libcurl 8.17.0 is required for custom FETCH
+literal handling; older versions are not supported.
+This version has not been tested on Linux.
 
 ## Storage notes
 

@@ -22,11 +22,23 @@
 | Task 3：HTML 正文回退与排版 | 子步骤通过 | 用户按参考代码接入按文本子类型递归选择正文及 HTML 回退。导师按委托实现空白折叠、预格式化文本保留、标题和段落换行、表格单元格分隔及 `template` 子树跳过。新增 `tests/mime_test.cpp` 回归用例，先因空白排版不符合预期失败，修改后 macOS Debug 全套 CTest 12/12 通过。 |
 | Task 3：嵌套正文选择和 HTML 回退复查 | 子步骤通过 | macOS Debug 全套 CTest 12/12 通过。额外临时虚构样本验证嵌套 `multipart/mixed` 与 `multipart/alternative` 中的纯文本选择和拼接、文本附件排除，以及中文 HTML-only 邮件正文提取。嵌套样本仍需纳入正式验收测试。 |
 | Task 3：MIME 与 HTML 解析 | 完成 | 用户完成附件信息提取、MIME 结构限制和字符集检查。导师在 `tests/mime_test.cpp` 补充虚构邮件测试，验证嵌套 multipart 正文的选择与拼接、附件原顺序及中文文件名、媒体类型与解码后的字节数、quoted-printable 中文正文、未知字符集错误以及错误后仍能解析下一封邮件。20 MiB 原文、32 层嵌套及 256 个部件的临界值均可解析，超过限制分别返回 `parse_error`。实际项目 macOS Debug／Release 重新构建后 CTest 各 12/12 通过，存储测试同时验证附件大小超出 SQLite 整数范围时拒绝写入。AC-5 的解析组件验收完成；同步编排中单封坏邮件不阻塞后续邮件的行为由 Task 5 验证。 |
-| Task 4：IMAP 接入 | 未验收 | 尚无本阶段真实收信通过记录。 |
+| Task 4：本地 TLS IMAP 测试服务器 | 子步骤通过 | 导师准备 `tests/fixtures/imap_server.py` 和 `imap_fixture` 测试，仅监听本机回环地址的临时端口，生成及清理临时证书。Python 客户端验证 IMAPS、STARTTLS、错误认证、空邮箱、UIDVALIDITY、UID 查询、INTERNALDATE、原文下载及未读状态。额外使用本机 curl 验证两种 TLS 模式下的 UID 查询、`BODY.PEEK[]` 下载及未读状态。macOS Debug／Release 全套 CTest 各 13/13 通过；C++ IMAP 客户端尚未实现。 |
+| Task 4：配置 libcurl 连接句柄 | 子步骤通过 | 用户完成 `make_imap_handle`。新增 `imap_connection` 测试，通过 C++ 句柄实际向本机虚构邮箱发起请求；IMAPS、STARTTLS 均验证连接与认证成功、错误密码、密码缺失、无效配置、证书不受信任及主机名不匹配的拒绝行为。macOS Debug／Release 全套 CTest 各 14/14 通过。 |
+| Task 4：解析收件箱快照 | 子步骤通过 | 导师按用户委托实现 `parse_mailbox_snapshot`，验证 UIDVALIDITY 和 UID 的非零 32 位整数范围、重复 UIDVALIDITY 一致性、空 SEARCH、缺失和非法响应，以及 UID 升序去重。新增 `imap_snapshot` 测试，重新构建并验证 macOS Debug／Release 全套 CTest 各 15/15 通过（含本机 TLS 测试）。 |
+| Task 4：实际读取 INBOX 快照 | 子步骤通过 | 导师按委托完成 `make_imap_handle` 路径配置及 `read_mailbox_snapshot`，用 `UID SEARCH ALL` 查询并解析协议响应。扩充 `imap_connection` 测试，在本机验证 IMAPS 和 STARTTLS 的正常及空邮箱快照、配置和认证失败、证书校验失败、强制 TLS 失败、命令拒绝、非法响应和超时。查询不改变未读标记，不输出协议响应，不包含密码且仅执行一次查询。macOS Debug／Release 构建无警告，全套 CTest 各 15/15 通过。 |
+| Task 4：复用 libcurl 选项设置 | 子步骤通过 | 按委托提取文件内 `CurlOptionSetter`，统一句柄选项设置及错误码记录，供连接、快照和后续下载复用。macOS Debug／Release 全套 CTest 各 15/15 通过。 |
+| Task 4：下载协议探查 | 准备完成 | 本机 curl 连接虚构 TLS 邮箱，验证在指定 `UIDVALIDITY` 的邮箱路径中执行 UID FETCH 并使用 BODY.PEEK[] 可以取得虚构邮件原文和 INTERNALDATE，下载后未读状态不变；UIDVALIDITY 不匹配时返回错误且不下载原文。此探查不代表 C++ 下载逻辑已实现。 |
+| Task 4：解析邮件接收时间 | 子步骤通过 | 按委托实现 `parse_internal_date`，校验固定格式、有效日历日期、时分秒和时区范围，将服务器接收时间换算为 UTC 秒数，保留负时间戳，非法输入返回不包含原始响应的 `protocol_error`。新增 `imap_internal_date` 专项测试，macOS Debug／Release 全套 CTest 各 16/16 通过，构建无警告。 |
+| Task 4：单封邮件下载 | 本机子步骤通过 | 按委托实现 `fetch_mail`，下载前校验远端标识和 UIDVALIDITY，通过 `UID FETCH` 与 `BODY.PEEK[]` 收取原文及 INTERNALDATE，按 literal 字节数分离原文与协议字段，保留未读状态。`imap_fetch` 测试覆盖两种 TLS 模式、正常下载、字段位于原文之后、未标记 FLAGS 响应、非文本字节、无末尾换行、空邮箱、邮件消失、UIDVALIDITY 变化或缺失、认证和证书错误、超时、非法及不完整响应，以及 20 MiB 临界值和超限。macOS Homebrew libcurl 8.23.0 下 Debug／Release 全套 CTest 各 17/17 通过，构建无警告。 |
+| Task 4：libcurl 最低版本调整 | 子步骤通过 | 对照测试系统 libcurl 8.7.1 时，普通邮件、原文后置字段和无末尾换行样本通过，但 20 MiB 超长行样本不能完整下载。[libcurl 8.17.0 发行说明](https://curl.se/ch/8.17.0.html)记录了自定义 FETCH 字面量处理修复。经用户明确批准，生效的最低版本由原冻结计划中的 8.0 提高至 8.17.0，其余计划不变；CMake 和依赖文档已同步，删除旧版运行时判断和兼容分支。实际 CMake 配置拒绝系统 8.7.1，并接受 Homebrew 8.23.0；macOS Debug／Release 全套 CTest 各 17/17 通过，构建无警告。本轮未在恰好 8.17.0 的运行库上测试。 |
+| Task 4：中文注释统一 | 完成 | 按用户要求统一项目源码、测试及构建配置的中文注释，关闭 clang-format 自动生成英文命名空间注释的功能，并将这一规范写入项目约定。 |
+| Task 4：有限重试与断连恢复 | 子步骤通过 | 按委托实现收件箱快照和单封下载的统一重试：只对临时连接、传输和明确的服务不可用故障重试，最多两次，分别等待 1、2 秒。各次尝试重新创建连接句柄和响应缓冲区，下载重连时重新核对 UIDVALIDITY。新增 `imap_retry` 本地 TLS 测试，验证连接中断、查询中断、原文下载中断、超时和服务暂不可用后的恢复，重试耗尽、退避时间、重连后邮件消失或 UIDVALIDITY 变化立即停止，以及完整原文和未读状态。认证、证书、参数、协议错误与下载超限直接报告，不在当前调用中反复请求。 |
+| Task 4：IMAP 接入 | 完成 | AC-6 本机验收通过。使用 Homebrew libcurl 8.23.0 与虚构 TLS 邮箱实际验证 IMAPS、STARTTLS、快照读取、正常下载、空邮箱、认证、证书、超时、断连恢复、有限重试、邮件消失、UIDVALIDITY 变化、INTERNALDATE、原文大小边界、未读状态保持及错误信息脱敏。macOS Debug／Release 全套 CTest 各 18/18 通过，构建无警告。真实邮箱验证留待 Task 7。 |
+| Task 4：IMAP 组件结构整理 | 完成 | 根据代码审查建议，将纯协议解析移入 `imap_protocol.cpp`／`.h`，网络传输留在 `imap.cpp`，按公共工具、快照、下载、公开入口聚合，统一文件内匿名命名空间和错误别名。`FetchTransfer` 封装协议状态，新增 `imap_fetch_protocol` 内存测试，覆盖属性顺序、原文分片与重组、完整性、大小限制、错误优先级及远端标识。单独编译协议组件及其测试时不链接 libcurl 也能通过。原公开接口、重试和下载行为不变；macOS Debug／Release 全套 CTest 各 19/19 通过，构建无警告，独立只读审查未发现阻塞问题。 |
 | Task 5：同步编排与恢复 | 未验收 | 尚无本阶段整体同步通过记录。 |
 | Task 6：缓存与 CLI 接入 | 未验收 | 终端仍使用阶段 1 示例数据。 |
 | Task 7：真实邮箱与阶段验收 | 未完成 | 真实邮箱与完整阶段回归仍需执行。 |
 
-当前接续位置：Task 4，建立本地 TLS IMAP 测试服务器。Task 2 已完成组件实现与存储验收，写命令入口的资源装配由 Task 6 接入；Task 3 已完成解析组件验收。后续状态及证据仅更新本文件，正式计划保持不变。
+当前接续位置：Task 5，完成增量同步，并在失败或重启后继续。Task 2 已完成组件实现与存储验收，写命令入口的资源装配由 Task 6 接入；Task 3 已完成解析组件验收；Task 4 已完成 IMAP 本机验收。后续状态及证据仅更新本文件，正式计划保持不变。
 
 新库使用最初的版本 1 账号表定义。使用提交 `d0c9410` 中另一种缩进创建的数据库也可以打开，原有结构和数据保留。详见[生命周期设计](../../specs/mail-ai-assistant-sqlite-lifecycle-design.md)第 4.1 节。
