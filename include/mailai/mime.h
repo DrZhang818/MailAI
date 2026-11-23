@@ -20,4 +20,4 @@ struct ParsedMail {
 
 Result<ParsedMail> parse_message(std::string_view raw);
 
-}  // namespace mailai
+}  // 命名空间 mailai

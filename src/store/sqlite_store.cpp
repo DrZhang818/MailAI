@@ -175,4 +175,4 @@ Result<Mail> SqliteStore::find(MailId id) {
     return mail;
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

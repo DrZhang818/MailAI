@@ -120,4 +120,4 @@ Result<std::vector<DecodedValue<Decoder>>> SqlContext::query_all(
     return result;
 }
 
-}  // namespace mailai::store_detail
+}  // 命名空间 mailai::store_detail

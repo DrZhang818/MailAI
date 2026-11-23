@@ -14,7 +14,7 @@ bool matches(const Mail& mail, const InboxQuery& query) {
     return true;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 Result<std::vector<InboxItem>> list_inbox(const std::vector<Account>& accounts,
                                           const std::vector<Mail>& mails, const InboxQuery& query) {
@@ -67,4 +67,4 @@ Result<Mail> find_mail(const std::vector<Mail>& mails, MailId id) {
     return *mail;
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

@@ -7,7 +7,7 @@ Result<ParseState> decode_parse_state(const SqlRow& row, std::string_view state)
     if (state == "failed") return ParseState::failed;
     return row.fail("Invalid stored parse state");
 }
-}  // namespace
+}  // 匿名命名空间
 
 Result<InboxItem> decode_inbox_item(const SqlRow& row) {
     InboxItem item;
@@ -82,4 +82,4 @@ Result<SyncState> decode_sync_state(const SqlRow& row) {
     return state;
 }
 
-}  // namespace mailai::store_detail
+}  // 命名空间 mailai::store_detail

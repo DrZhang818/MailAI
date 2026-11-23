@@ -41,8 +41,8 @@ public:
 
     Status schedule(const AccountId& account_id, std::string_view folder, const MailboxSnapshot& snapshot, std::size_t initial_limit);
 
-    // A returned ID confirms persistence, including when a parse error was saved.
-    // Count the message as synchronized only when parsing and persistence both succeed.
+    // 返回 ID 表示持久化成功，包括解析失败但已保存的情况。
+    // 只有解析和持久化均成功时，才将邮件计为同步成功。
     Result<MailId> complete(const FetchedMail& mail, const Result<ParsedMail>& parsed);
 
     Status fail(const RemoteKey& key, const Error& error);
@@ -55,4 +55,4 @@ private:
     sqlite3* db_{nullptr};
 };
 
-}  // namespace mailai
+}  // 命名空间 mailai

@@ -28,4 +28,4 @@ private:
     int fd_{-1};
 };
 
-} // namespace mailai
+} // 命名空间 mailai

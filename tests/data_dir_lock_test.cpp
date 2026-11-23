@@ -32,7 +32,7 @@ void close_fd(int& fd) {
     if (fd >= 0) ::close(std::exchange(fd, -1));
 }
 
-// The child acquires its own descriptor after fork, so the parent inherits no lock reference.
+// 子进程在 fork 后独立获取文件描述符，避免父进程持有锁引用。
 class LockHolder {
 public:
     explicit LockHolder(const std::filesystem::path& directory) {
@@ -56,7 +56,7 @@ public:
 
             char command{};
             while (::read(commands_[0], &command, 1) < 0 && errno == EINTR) {}
-            // Skip C++ destructors deliberately: process exit must also release the lock.
+            // 故意跳过 C++ 析构函数，验证进程退出也会释放锁。
             ::_exit(0);
         }
 
@@ -219,7 +219,7 @@ void test_read_only_database_access_does_not_take_directory_lock() {
     expect(store.has_value() && store->list({}).has_value(),
         "holding the directory lock must not block existing read-only cache access");
 }
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     try {

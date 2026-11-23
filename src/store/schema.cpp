@@ -12,7 +12,7 @@
 
 namespace mailai::store_detail {
 namespace {
-// Preserve version 1 SQL text: SQLite stores its internal whitespace.
+// 保留版本 1 的 SQL 文本，因为 SQLite 会保存其中的空白字符。
 constexpr std::array version_one_sql{
 R"sql(CREATE TABLE accounts (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -80,7 +80,7 @@ R"sql(CREATE TABLE attachments (
     "CREATE INDEX messages_account_order ON messages(account_id,received_at_utc DESC,id ASC);"
 };
 
-// SQLite catalog text for the accounts table shipped in d0c9410.
+// 提交 d0c9410 中 accounts 表的 SQLite 目录文本。
 constexpr std::string_view alternate_accounts_schema = R"sql(CREATE TABLE accounts (
         id TEXT PRIMARY KEY NOT NULL,
         display_name TEXT NOT NULL,
@@ -167,7 +167,7 @@ Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
 
     return std::unexpected(schema_error("Schema definition mismatch: " + expected[i].name));
 }
-}  // namespace
+}  // 匿名命名空间
 
 Status ensure_schema(sqlite3* db, OpenMode mode) {
     const SqlContext context{db, "storage.schema"};
@@ -216,4 +216,4 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
 
     return context.commit(*transaction);
 }
-}  // namespace mailai::store_detail
+}  // 命名空间 mailai::store_detail

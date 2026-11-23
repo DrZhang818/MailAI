@@ -25,7 +25,7 @@ Error make_config_error(const std::string& message) {
     };
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 Result<std::filesystem::path> resolve_data_dir(const Environment& env) {
     if (const auto it = env.find("MAILAI_DATA_DIR"); it != env.end() && !it->second.empty()) {
@@ -103,4 +103,4 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     return config;
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

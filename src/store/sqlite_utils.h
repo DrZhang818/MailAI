@@ -49,7 +49,7 @@ using SqlValue = std::variant<std::nullptr_t, std::int64_t, std::string_view, Bl
 
 class SqlContext;
 
-// A view of the current row. Decoders copy values before the next SQLite step.
+// 当前数据行的视图；解码函数在 SQLite 推进到下一行之前复制字段值。
 class SqlRow {
 public:
     std::unexpected<Error> fail(std::string_view message) const;
@@ -80,7 +80,7 @@ Result<T> decode_scalar(const SqlRow& row);
 template <class Decoder>
 using DecodedValue = typename std::invoke_result_t<Decoder, const SqlRow&>::value_type;
 
-// Borrows the connection; shares SQLite mechanics and diagnostic context for one operation.
+// 借用数据库连接，在单次操作中统一 SQLite 操作和错误上下文。
 class SqlContext {
 public:
     SqlContext(
@@ -93,11 +93,11 @@ public:
     std::unexpected<Error> fail(ErrorCode code, std::string_view message, std::optional<MailId> mail_id = {}) const;
     std::unexpected<Error> fail(Error error) const;
 
-    // Single statements require all parameter slots. Use nullptr to bind SQL NULL.
+    // 单条语句须绑定所有参数位置，使用 nullptr 绑定 SQL NULL。
     Status execute(std::string_view sql, std::initializer_list<SqlValue> values = {}) const;
 
-    // Prepare once, bind common parameters once, then fill the remaining parameters per row.
-    // Each row must supply the complete suffix. The caller owns the surrounding transaction.
+    // 只准备一次语句并绑定公共参数，逐行绑定剩余参数。
+    // 每行必须提供完整的剩余参数，外层事务由调用方管理。
     template <std::ranges::input_range Rows>
     Status execute_many(
         std::string_view sql, std::initializer_list<SqlValue> common, Rows&& rows
@@ -108,13 +108,13 @@ public:
     int changes() const;
     Result<std::int64_t> query_integer(std::string_view sql) const;
 
-    // Zero rows is an empty optional. More than one row is a storage error.
+    // 没有结果时返回空 optional，多于一行时返回存储错误。
     template <class Decoder>
     Result<std::optional<DecodedValue<Decoder>>> query_one(
         std::string_view sql, std::initializer_list<SqlValue> values, Decoder decode
     ) const;
 
-    // The visitor handles one row at a time. The count includes rows it chooses to skip.
+    // 访问函数逐行处理结果，计数包含主动跳过的行。
     template <class Visitor>
     Result<std::size_t> scan(
         std::string_view sql, std::initializer_list<SqlValue> values, Visitor visit
@@ -135,7 +135,7 @@ private:
         BindMode bind_mode = BindMode::complete
     ) const;
     Status _bind(const Statement& statement, int first_index, std::span<const SqlValue> values) const;
-    // A successful false value means the query has reached SQLITE_DONE.
+    // 成功返回 false 表示查询已到达 SQLITE_DONE。
     Result<bool> _next(const Statement& statement) const;
     Status _finish(const Statement& statement) const;
     Status _execute(const Statement& statement) const;
@@ -146,6 +146,6 @@ private:
     std::optional<MailId> mail_id_;
 };
 
-}  // namespace mailai::store_detail
+}  // 命名空间 mailai::store_detail
 
 #include "sqlite_utils.hpp"

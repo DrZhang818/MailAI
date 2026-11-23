@@ -655,7 +655,7 @@ void run_pending_tests() {
     test_pending_sql_failure_and_recovery<SqliteStore>();
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     try {

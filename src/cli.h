@@ -12,4 +12,4 @@ namespace mailai::cli {
 int run_cli(const std::vector<std::string>& args, const std::vector<Account>& accounts,
             const std::vector<Mail>& mails, std::ostream& out, std::ostream& err);
 
-}  // namespace mailai::cli
+}  // 命名空间 mailai::cli

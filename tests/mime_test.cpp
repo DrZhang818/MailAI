@@ -158,7 +158,7 @@ std::string nested_message(std::size_t depth) {
 }
 
 std::string multipart_message(std::size_t total_parts) {
-    // The root multipart counts as one part, including all unselected alternatives.
+    // 根 multipart 和所有未选中的替代正文部件均计入部件总数。
     std::string raw = "Content-Type: multipart/alternative; boundary=parts\n\n";
     for (std::size_t i = 1; i < total_parts; ++i) {
         raw += "--parts\nContent-Type: text/plain; charset=UTF-8\n\n正文\n";
@@ -167,7 +167,7 @@ std::string multipart_message(std::size_t total_parts) {
     return raw;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     const char* current_sample = "plain_utf8.eml";

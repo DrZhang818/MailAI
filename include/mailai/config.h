@@ -36,4 +36,4 @@ Result<std::filesystem::path> resolve_data_dir(const Environment& env);
 
 Result<RuntimeConfig> parse_sync_config(const Environment& env);
 
-}  // namespace mailai
+}  // 命名空间 mailai

@@ -411,7 +411,7 @@ void read_message_headers(GMimeMessage* message, ParsedMail& result) {
     }
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 Result<ParsedMail> parse_message(std::string_view raw) {
     if (raw.empty()) {
@@ -481,4 +481,4 @@ Result<ParsedMail> parse_message(std::string_view raw) {
     return result;
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

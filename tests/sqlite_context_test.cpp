@@ -230,7 +230,7 @@ void test_typed_queries_reject_bad_rows_and_extra_results() {
         expect(recovered && *recovered == 7, "decode and execution failures must leave the connection usable");
     }
 }
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     try {

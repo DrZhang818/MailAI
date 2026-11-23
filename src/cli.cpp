@@ -35,7 +35,7 @@ int query_error(const Error& error, std::ostream& err) {
     return 1;
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int run_cli(const std::vector<std::string>& args, const std::vector<Account>& accounts,
             const std::vector<Mail>& mails, std::ostream& out, std::ostream& err) {
@@ -125,4 +125,4 @@ int run_cli(const std::vector<std::string>& args, const std::vector<Account>& ac
     return 0;
 }
 
-}  // namespace mailai::cli
+}  // 命名空间 mailai::cli

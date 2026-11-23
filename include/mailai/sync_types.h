@@ -48,4 +48,4 @@ struct SyncSummary {
     std::vector<SyncFailure> failures;
 };
 
-}  // namespace mailai
+}  // 命名空间 mailai

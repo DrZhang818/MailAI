@@ -93,7 +93,7 @@ Status register_pending(
     });
     return context.execute_many(save_job_sql, {account_id, folder, validity}, rows);
 }
-}  // namespace
+}  // 匿名命名空间
 
 namespace store_detail {
 Result<SyncState> load_sync_state(
@@ -113,7 +113,7 @@ Result<SyncState> load_sync_state(
 
     return std::move(**found);
 }
-}  // namespace store_detail
+}  // 命名空间 store_detail
 
 Result<SyncState> SqliteStore::state(const AccountId& account_id, std::string_view folder) {
     const SqlContext context{db_, "storage.state", account_id};
@@ -194,4 +194,4 @@ Status SqliteStore::schedule(const AccountId& account_id, std::string_view folde
     return context.commit(*transaction);
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

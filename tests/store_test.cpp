@@ -72,7 +72,7 @@ void test_known_version_one_layouts_reopen() {
                 credential_env TEXT NOT NULL,
                 tls_mode TEXT NOT NULL
             );)sql";
-    // The account DDL in Git commit d0c9410.
+    // Git 提交 d0c9410 中的账号表定义。
     constexpr const char* alternate_accounts_sql = R"sql(CREATE TABLE accounts (
         id TEXT PRIMARY KEY NOT NULL,
         display_name TEXT NOT NULL,
@@ -533,7 +533,7 @@ void test_corrupt_schema() {
     expect(std::filesystem::file_size(path) > 0,
            "corrupt schema file must not be removed or replaced with an empty file");
 }
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     const std::pair<const char*, void (*)()> tests[]{

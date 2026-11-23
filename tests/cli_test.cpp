@@ -162,7 +162,7 @@ void test_account_option_requires_value() {
     }
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     try {

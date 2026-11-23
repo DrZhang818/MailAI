@@ -177,7 +177,7 @@ Status update_pending_after_parse(const SqlContext& context, const RemoteKey& re
         {remote.account_id, remote.folder, remote.uid_validity, remote.uid, parsed.error().stage, parsed.error().message}
     );
 }
-}  // namespace
+}  // 匿名命名空间
 
 Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<ParsedMail>& parsed) {
     const SqlContext context{db_, "storage.complete", mail.key.account_id};
@@ -262,4 +262,4 @@ Status SqliteStore::record_outcome(
     return context.commit(*transaction);
 }
 
-}  // namespace mailai
+}  // 命名空间 mailai

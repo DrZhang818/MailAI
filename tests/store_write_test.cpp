@@ -546,7 +546,7 @@ void run_write_tests() {
     test_record_outcome_preserves_cursor_and_last_success_on_failure<SqliteStore>();
     test_write_methods_preserve_full_keys_and_read_only_data<SqliteStore>();
 }
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     try {

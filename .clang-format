@@ -1,5 +1,5 @@
 BasedOnStyle: Google
-# Use clang-format 23 or newer; VS Code uses the same local binary.
+# 使用 clang-format 23 或更新版本，VS Code 使用同一个本地程序。
 IndentWidth: 4
 ContinuationIndentWidth: 4
 UseTab: Never
@@ -10,11 +10,14 @@ PointerAlignment: Left
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 
-# Use a fixed continuation indent rather than aligning to a long function name.
+# 保留中文命名空间结束注释，不自动生成英文注释。
+FixNamespaceComments: false
+
+# 使用固定续行缩进，避免按较长的函数名对齐。
 AlignAfterOpenBracket: false
 PenaltyBreakBeforeFirstCallParameter: 0
 
-# Keep short calls compact, but expand long argument and parameter lists.
+# 短调用紧凑排列，较长的实参和形参列表展开。
 PackArguments:
   BinPack: OnePerLine
 PackParameters:
@@ -22,9 +25,9 @@ PackParameters:
 AllowAllArgumentsOnNextLine: true
 AllowAllParametersOfDeclarationOnNextLine: true
 
-# Give multiline Error/InboxItem initializers their own opening and closing lines.
+# 多行 Error 和 InboxItem 初始化列表的起止括号分别独占一行。
 BreakAfterOpenBracketBracedList: true
 BreakBeforeCloseBracketBracedList: true
 
-# SQL text participates in schema comparison and must not be reformatted.
+# SQL 文本参与数据库结构比较，禁止重新格式化。
 RawStringFormats: []

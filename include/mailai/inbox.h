@@ -29,4 +29,4 @@ Result<std::vector<InboxItem>> list_inbox(const std::vector<Account>& accounts,
 
 Result<Mail> find_mail(const std::vector<Mail>& mails, MailId id);
 
-}  // namespace mailai
+}  // 命名空间 mailai

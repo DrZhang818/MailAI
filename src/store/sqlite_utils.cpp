@@ -81,7 +81,7 @@ Status configure_connection(sqlite3* db) {
 Status configure_wal(sqlite3* db) {
     const char* filename = sqlite3_db_filename(db, "main");
     if (!filename || *filename == '\0')
-        return {};  // In-memory or temporary database.
+        return {};  // 内存数据库或临时数据库。
 
     const SqlContext context{db, "storage.configure"};
     auto value = context.query_one("PRAGMA main.journal_mode=WAL", {}, decode_scalar<std::string>);
@@ -276,4 +276,4 @@ int SqlContext::changes() const {
     return sqlite3_changes(db_);
 }
 
-}  // namespace mailai::store_detail
+}  // 命名空间 mailai::store_detail

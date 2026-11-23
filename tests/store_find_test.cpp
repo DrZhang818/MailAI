@@ -201,7 +201,7 @@ void test_invalid_stored_fields() {
             expect_error(store->find(42), ErrorCode::storage_error, 42);
     }
 }
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     const std::pair<const char*, void (*)()> tests[]{

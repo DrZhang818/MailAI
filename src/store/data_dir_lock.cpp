@@ -19,7 +19,7 @@ Error lock_error(ErrorCode code, std::string message) {
     return Error{code, std::move(message), std::nullopt, std::nullopt, "storage.lock"};
 }
 
-} // namespace
+} // 匿名命名空间
 
 DataDirLock::~DataDirLock() {
     if(fd_ >= 0) ::close(fd_);
@@ -93,4 +93,4 @@ Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, 
     }
 }
 
-} // namespace mailai
+} // 命名空间 mailai

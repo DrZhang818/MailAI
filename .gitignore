@@ -1,20 +1,20 @@
-# Build output
+# 构建产物
 build/
 
-# Local credentials and secrets
+# 本地凭据和密钥
 credentials.local.*
 .env
 .env.*
 *.pem
 *.key
 
-# Local databases
+# 本地数据库
 *.sqlite*
 
-# Python cache
+# Python 缓存
 __pycache__/
 *.py[cod]
 
-# Editor and OS files
+# 编辑器和操作系统文件
 .DS_Store
 Thumbs.db

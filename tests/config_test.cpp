@@ -219,7 +219,7 @@ void test_data_dir_precedence() {
            "empty data directory sources should report config_error");
 }
 
-}  // namespace
+}  // 匿名命名空间
 
 int main() {
     test_missing_data_dir_sources();
