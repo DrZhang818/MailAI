@@ -2,8 +2,8 @@
 
 MailAI is a C++23 command-line mail assistant in development. Its current
 executable demonstrates browsing a small, in-memory set of fictional emails.
-The core library also contains SQLite storage and synchronization bookkeeping
-that are not yet connected to the command line.
+The core library also supports incremental IMAP synchronization, MIME parsing,
+and SQLite storage. These capabilities are not yet connected to the command line.
 
 ## Current status
 
@@ -22,11 +22,14 @@ The core library provides environment-based configuration parsing and a SQLite
 store for accounts, messages, attachments, and synchronization state. The store
 can register pending messages, save fetched messages and parsing results, record
 failures and synchronization outcomes, and handle UIDVALIDITY changes. These
-are library capabilities, not CLI commands. Real IMAP fetching, MIME parsing,
-CLI access to the local store, AI features, and replies are not yet implemented.
+functions are coordinated by the `sync_inbox` service, which reads the INBOX
+snapshot, schedules the newest 20 messages on the first synchronization or
+after a UIDVALIDITY change, and processes new and pending messages in UID order.
+Successful messages are not downloaded again; failures can be retried and
+unfinished work survives a restart. The IMAP client uses read-only fetching.
 A move-only data-directory write lock is available through the core library,
-with bounded waits and automatic release. CLI integration is planned with the
-synchronization command.
+with bounded waits and automatic release. CLI integration and real-mailbox
+verification are still planned, as are AI features and replies.
 
 ## Build from source
 
@@ -140,8 +143,11 @@ reassembly, attribute ordering, incomplete responses and error precedence
 without a network connection. The `imap_retry` test checks reconnects and at most
 two retries for transient errors, with delays of one and two seconds. Each
 attempt uses a new connection, and downloads recheck UIDVALIDITY before
-fetching. On macOS with Homebrew libcurl 8.23.0, Debug and Release each passed
-all 19 tests. libcurl 8.17.0 is required for custom FETCH
+fetching. The `sync` test combines a controlled mail source with real SQLite
+storage and MIME parsing to check incremental discovery, failure recovery,
+interruption and restart, UIDVALIDITY changes, and storage failures.
+On macOS with Homebrew libcurl 8.23.0, Debug and Release each passed all
+20 tests. libcurl 8.17.0 is required for custom FETCH
 literal handling; older versions are not supported.
 This version has not been tested on Linux.
 

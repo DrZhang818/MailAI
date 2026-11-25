@@ -25,6 +25,7 @@ find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
 # 核心库及其公开依赖。
 add_library(mailai_core STATIC
     src/app/inbox.cpp
+    src/app/sync.cpp
     src/config.cpp
     src/mail/imap.cpp
     src/mail/imap_protocol.cpp
@@ -119,11 +120,17 @@ add_executable(imap_fetch_protocol_test
     tests/imap_fetch_protocol_test.cpp
 )
 
+add_executable(sync_test
+    tests/sync_test.cpp
+)
+
 target_link_libraries(imap_connection_test PRIVATE CURL::libcurl)
 target_include_directories(imap_connection_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_include_directories(imap_snapshot_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_include_directories(imap_internal_date_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_include_directories(imap_fetch_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(sync_test PRIVATE SQLite3::SQLite3)
+target_include_directories(sync_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
 target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -153,6 +160,7 @@ foreach(mailai_target IN ITEMS
     imap_snapshot_test
     imap_internal_date_test
     imap_fetch_protocol_test
+    sync_test
 )
     target_link_libraries(${mailai_target} PRIVATE mailai_core)
 endforeach()
@@ -182,6 +190,7 @@ foreach(mailai_target IN ITEMS
     imap_snapshot_test
     imap_internal_date_test
     imap_fetch_protocol_test
+    sync_test
 )
     set_target_properties(${mailai_target} PROPERTIES
         CXX_STANDARD 23
@@ -230,6 +239,10 @@ set_tests_properties(imap_connection PROPERTIES
 add_test(NAME imap_snapshot COMMAND imap_snapshot_test)
 add_test(NAME imap_internal_date COMMAND imap_internal_date_test)
 add_test(NAME imap_fetch_protocol COMMAND imap_fetch_protocol_test)
+add_test(NAME sync
+    COMMAND sync_test
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime"
+)
 add_test(NAME imap_fetch
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_fetch_test.py"
         "$<TARGET_FILE:imap_connection_test>"

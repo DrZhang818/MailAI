@@ -43,3 +43,13 @@ inline constexpr char fetch_response_too_large[] = "IMAP response exceeds size l
 inline constexpr char service_unavailable[] = "IMAP service temporarily unavailable";
 
 }  // 命名空间 mailai::error_messages::imap
+
+namespace mailai::error_messages::sync {
+
+inline constexpr char source_stage[] = "sync.source";
+inline constexpr char fetch_stage[] = "sync.fetch";
+inline constexpr char invalid_mail_source[] = "Missing synchronization mail source";
+inline constexpr char unexpected_remote_key[] =
+    "Fetched mail does not match the pending remote key";
+
+}  // 命名空间 mailai::error_messages::sync
