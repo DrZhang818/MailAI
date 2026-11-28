@@ -8,9 +8,9 @@ macOS 27.2.1（Apple Silicon）、Apple Clang 21.0.0、CMake 4.4.5、Ninja 1.13.
 
 本轮在受管理临时目录中按 README 的依赖选择方式独立构建 Debug 和 Release，两种模式各 11 项 CTest 全部通过，构建无警告。`store` 验证数据库生命周期、约束与失败恢复。`store_list`、`store_find` 使用真实临时 SQLite 验证列表筛选与排序、详情与附件、ID 边界、只读访问、数据保留和查询失败恢复。`store_sync` 验证同步状态与待办查询、任务登记、UIDVALIDITY 变化及事务回滚。`store_write` 验证邮件与附件保存、稳定 ID、解析失败后重试、远端消失后停止重试、同步结果记录、重开持久性及写入失败回滚。`sqlite_context` 验证共享 SQL 操作的参数复制、空值类型、语句复用、执行错误和事务失败恢复。`data_dir_lock` 验证跨进程争锁、默认与自定义超时、等待后取得、进程退出和移动后的释放、数据保留及持锁期间的只读缓存访问。写命令入口的取得锁调用由后续 CLI 接入任务实现。
 
-Task 7 本机回归：Debug 与独立 Release 配置选用上述库，构建均无警告，默认 CTest 各 21/21 通过。另显式构建 `imap_live_probe`，其独立虚构 TLS 邮箱测试在两种构建下通过，验证启用门槛、最多五封、解析统计、不修改已读状态、不创建缓存及诊断脱敏。真实邮箱的验收结果单独记录在阶段进度中；该回归没有访问真实邮箱。
+Task 7 早期本机回归中，Debug 与独立 Release 使用上述依赖，均无警告构建，默认 CTest 各 21/21 通过。当时也显式构建并验证了独立的 `imap_live_probe` 虚构 TLS 邮箱测试。
 
-macOS 登录记忆功能使用系统自带的 Security.framework 和 CoreFoundation.framework，无需安装额外 Homebrew 依赖。Debug／Release 构建均无警告，默认 CTest 各 24/24 通过。钥匙串组件测试模拟系统调用，真实伪终端与虚构 TLS 邮箱验证密码隐藏和认证失败处理，未访问真实钥匙串或真实邮箱。Linux 登录功能留待后续设计。
+加入 macOS 登录记忆后，默认 CTest 增至 24 项。登录功能使用系统自带的 Security.framework 和 CoreFoundation.framework，无需安装额外 Homebrew 依赖。钥匙串组件测试模拟系统调用，伪终端和虚构 TLS 邮箱覆盖密码隐藏与认证失败。2026-11-28 阶段收尾审查修复后，macOS Debug 与独立 Release（含 `imap_live_probe`）均 0 警告构建通过，默认 CTest 各 24/24 通过，独立的 `imap_live_probe_test.py` 也在两种构建下通过。真实邮箱的验收结果另见[阶段进度](superpowers/plans/phase-02-mail-sync/progress.md)。
 
 使用本机系统版本作为部署目标，程序未验证对较旧 macOS 的兼容性。当前完整阶段代码尚未在 Linux 执行。
 

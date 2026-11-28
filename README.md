@@ -137,9 +137,14 @@ when it belongs to a retired UIDVALIDITY range; it remains available locally.
 ./build/debug/mail_assistant inbox
 ```
 
-Enter the mailbox address, IMAP server and client-specific password. Press
-Enter to accept the displayed defaults for username, TLS, port and cache
-directory. For an existing cache, choose its existing data directory.
+Enter the mailbox address and the credential requested for your provider (such as
+a client-specific password or IMAP authorization code). Common providers
+(including BJTU, QQ, 163, 126, yeah.net, Gmail, Outlook, and iCloud)
+automatically use their standard IMAP host, implicit TLS on port 993, the
+mailbox address as username, and the default cache directory; unknown domains
+prompt for the IMAP host. Run `./build/debug/mail_assistant login --advanced` to
+customize the IMAP host, username, TLS mode, port, or cache directory (for an
+existing cache, choose its existing data directory).
 The password prompt does not echo the input. Login verifies IMAP access over
 TLS before saving settings; it does not download mail or change read status.
 
@@ -271,11 +276,14 @@ check both TLS modes, authentication and certificate validation. The
 `imap_internal_date` and `imap_fetch` tests verify reception timestamps, exact
 message bytes, read-only fetching, remote identity checks, transfer errors and
 the 20 MiB download limit. The `imap_fetch_protocol` test exercises literal
-reassembly, attribute ordering, incomplete responses and error precedence
-without a network connection. The `imap_retry` test checks reconnects and at most
-two retries for transient errors, with delays of one and two seconds. Each
-attempt uses a new connection, and downloads recheck UIDVALIDITY before
-fetching. The `sync` test combines a controlled mail source with real SQLite
+reassembly, attribute ordering, incomplete responses, and UIDVALIDITY updates
+after the literal without a network connection. The `imap_retry` test checks
+connection reuse across FETCH requests and continued use of the selected
+UIDVALIDITY after unsolicited `EXISTS` updates. It also checks that new
+connections must report the expected UIDVALIDITY, including when libcurl
+reopens an idle connection and when the application retries a transient
+failure. Application retries use delays of one and two seconds. The `sync`
+test combines a controlled mail source with real SQLite
 storage and MIME parsing to check incremental discovery, failure recovery,
 interruption and restart, UIDVALIDITY changes, and storage failures.
 The `cli_integration` test runs the actual executable against a loopback TLS
@@ -300,8 +308,10 @@ grouped by responsibility:
 - `src/cli/`: command-line arguments, login prompts, and terminal output.
 - `src/app/`: business services and synchronization orchestration.
 - `src/config/`: runtime configuration, remembered login profiles, and Keychain access.
-- `src/mail/`: IMAP transport and protocol parsing, MIME parsing.
+- `src/mail/` contains IMAP transport and protocol parsing, MIME parsing, and
+  HTML text and table extraction in `html_extract.{h,cpp}`.
 - `src/store/`: SQLite persistence and data-directory locking.
+- `src/util/` contains shared file descriptor and directory operations.
 
 Public core-library headers remain in `include/mailai/`. Internal headers
 stay beside their implementations.

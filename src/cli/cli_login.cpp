@@ -55,12 +55,38 @@ bool valid_email(std::string_view email) {
            email.find('@', at + 1) == std::string_view::npos && !has_whitespace_or_control(email);
 }
 
-std::string provider_host(std::string_view email) {
+struct ProviderPreset {
+    std::string_view domain;
+    std::string_view host;
+    std::string_view tls;
+    std::string_view port;
+    std::string_view credential_label;
+};
+
+constexpr std::array<ProviderPreset, 11> provider_presets{{
+    {"bjtu.edu.cn", "mail.bjtu.edu.cn", "implicit", "993", "客户端专用密码"},
+    {"qq.com", "imap.qq.com", "implicit", "993", "IMAP 授权码（非登录密码）"},
+    {"foxmail.com", "imap.qq.com", "implicit", "993", "IMAP 授权码（非登录密码）"},
+    {"163.com", "imap.163.com", "implicit", "993", "IMAP 授权码（非登录密码）"},
+    {"126.com", "imap.126.com", "implicit", "993", "IMAP 授权码（非登录密码）"},
+    {"yeah.net", "imap.yeah.net", "implicit", "993", "IMAP 授权码（非登录密码）"},
+    {"gmail.com", "imap.gmail.com", "implicit", "993", "应用专用密码"},
+    {"outlook.com", "outlook.office365.com", "implicit", "993", "应用专用密码或账号密码"},
+    {"hotmail.com", "outlook.office365.com", "implicit", "993", "应用专用密码或账号密码"},
+    {"live.com", "outlook.office365.com", "implicit", "993", "应用专用密码或账号密码"},
+    {"icloud.com", "imap.mail.me.com", "implicit", "993", "应用专用密码"},
+}};
+
+std::optional<ProviderPreset> find_provider_preset(std::string_view email) {
     std::string domain{email.substr(email.find('@') + 1)};
     std::ranges::transform(domain, domain.begin(), [](unsigned char c) {
         return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : static_cast<char>(c);
     });
-    return domain == "bjtu.edu.cn" ? "mail.bjtu.edu.cn" : "";
+    for (const auto& preset : provider_presets) {
+        if (preset.domain == domain)
+            return preset;
+    }
+    return std::nullopt;
 }
 
 bool prompt(std::ostream& err,
@@ -89,11 +115,11 @@ bool prompt(std::ostream& err,
 }
 
 std::optional<Environment> ask_configuration(
-    const Environment& defaults, const LoginInput& input, std::ostream& err) {
+    const Environment& defaults, const LoginInput& input, std::ostream& err, bool advanced) {
     Environment config;
     const auto saved_email = setting(defaults, "MAILAI_EMAIL");
     auto& email = config["MAILAI_EMAIL"];
-    if (!prompt(err, input, "邮箱地址", saved_email, email))
+    if (!prompt(err, input, "邮箱地址", "", email))
         return std::nullopt;
     if (!valid_email(email)) {
         err << error_message::login_cli::invalid_email << '\n';
@@ -101,12 +127,18 @@ std::optional<Environment> ask_configuration(
     }
 
     const bool same_account = saved_email.empty() || saved_email == email;
+    const auto preset = find_provider_preset(email);
     const auto saved_host = setting(defaults, "MAILAI_IMAP_HOST");
-    const auto default_host =
-        same_account && !saved_host.empty() ? saved_host : provider_host(email);
+    const auto default_host = same_account && !saved_host.empty()
+                                  ? saved_host
+                                  : (preset ? std::string{preset->host} : std::string{});
     auto& host = config["MAILAI_IMAP_HOST"];
-    if (!prompt(err, input, "IMAP 服务器", default_host, host))
-        return std::nullopt;
+    if (advanced || default_host.empty()) {
+        if (!prompt(err, input, "IMAP 服务器", default_host, host))
+            return std::nullopt;
+    } else {
+        host = default_host;
+    }
     if (host.empty() || has_whitespace_or_control(host) ||
         host.find_first_of("/\\@?#") != std::string::npos) {
         err << error_message::login_cli::invalid_host << '\n';
@@ -114,44 +146,59 @@ std::optional<Environment> ask_configuration(
     }
 
     const auto saved_user = setting(defaults, "MAILAI_IMAP_USER");
+    const auto default_user = same_account && !saved_user.empty() ? saved_user : email;
     auto& username = config["MAILAI_IMAP_USER"];
-    if (!prompt(err,
-            input,
-            "IMAP 用户名",
-            same_account && !saved_user.empty() ? saved_user : email,
-            username))
-        return std::nullopt;
 
     const bool same_host = same_account && host == saved_host;
     const auto saved_tls = setting(defaults, "MAILAI_IMAP_TLS");
-    const std::string default_tls = same_host && !saved_tls.empty() ? saved_tls : "implicit";
+    const std::string default_tls = same_host && !saved_tls.empty()
+                                        ? saved_tls
+                                        : (preset ? std::string{preset->tls} : "implicit");
     auto& tls = config["MAILAI_IMAP_TLS"];
-    if (!prompt(err, input, "TLS 模式 (implicit/starttls)", default_tls, tls))
-        return std::nullopt;
-    if (tls != "implicit" && tls != "starttls") {
-        err << error_message::config::invalid_tls << '\n';
-        return std::nullopt;
-    }
 
     const auto saved_port = setting(defaults, "MAILAI_IMAP_PORT");
-    const std::string default_port = same_host && tls == default_tls && !saved_port.empty()
-                                         ? saved_port
-                                         : (tls == "implicit" ? "993" : "143");
-    if (!prompt(err, input, "IMAP 端口", default_port, config["MAILAI_IMAP_PORT"]))
-        return std::nullopt;
+    auto default_port_for_tls = [&](std::string_view mode) {
+        if (same_host && mode == default_tls && !saved_port.empty())
+            return saved_port;
+        if (preset && host == preset->host && mode == preset->tls)
+            return std::string{preset->port};
+        return std::string{mode == "implicit" ? "993" : "143"};
+    };
 
     const auto default_path = resolve_data_dir(defaults);
     const auto path_text = default_path ? default_path->string() : std::string{};
     auto& path = config["MAILAI_DATA_DIR"];
-    if (!prompt(err, input, "邮件数据目录", path_text, path))
-        return std::nullopt;
-    if (path == "~" || path.starts_with("~/")) {
-        const auto home = setting(defaults, "HOME");
-        if (home.empty()) {
-            err << error_message::config::data_dir_missing << '\n';
+
+    if (advanced) {
+        if (!prompt(err, input, "IMAP 用户名", default_user, username))
+            return std::nullopt;
+
+        if (!prompt(err, input, "TLS 模式 (implicit/starttls)", default_tls, tls))
+            return std::nullopt;
+        if (tls != "implicit" && tls != "starttls") {
+            err << error_message::config::invalid_tls << '\n';
             return std::nullopt;
         }
-        path = path.size() == 1 ? home : (std::filesystem::path{home} / path.substr(2)).string();
+
+        if (!prompt(err, input, "IMAP 端口", default_port_for_tls(tls), config["MAILAI_IMAP_PORT"]))
+            return std::nullopt;
+
+        if (!prompt(err, input, "邮件数据目录", path_text, path))
+            return std::nullopt;
+        if (path == "~" || path.starts_with("~/")) {
+            const auto home = setting(defaults, "HOME");
+            if (home.empty()) {
+                err << error_message::config::data_dir_missing << '\n';
+                return std::nullopt;
+            }
+            path =
+                path.size() == 1 ? home : (std::filesystem::path{home} / path.substr(2)).string();
+        }
+    } else {
+        username = default_user;
+        tls = default_tls;
+        config["MAILAI_IMAP_PORT"] = default_port_for_tls(tls);
+        path = path_text;
     }
 
     if (same_account) {
@@ -169,6 +216,12 @@ std::optional<Environment> ask_configuration(
     if (const auto validated = parse_sync_config(config); !validated) {
         print_error(err, validated.error());
         return std::nullopt;
+    }
+    if (!advanced) {
+        err << "连接配置：";
+        print_text(err, host);
+        err << ':' << config["MAILAI_IMAP_PORT"] << " (" << (tls == "implicit" ? "TLS" : "STARTTLS")
+            << ")\n";
     }
     return config;
 }
@@ -209,8 +262,11 @@ LoginInput terminal_login_input() {
 #endif
 }
 
-int execute_login(
-    const MailServices& services, std::ostream& out, std::ostream& err, const LoginInput& input) {
+int execute_login(const MailServices& services,
+    std::ostream& out,
+    std::ostream& err,
+    const LoginInput& input,
+    bool advanced) {
     if (!input.read_line || !input.read_password) {
         err << error_message::login_cli::terminal_required << '\n';
         return 1;
@@ -224,12 +280,15 @@ int execute_login(
         print_error(err, defaults.error());
         return 1;
     }
-    auto config = ask_configuration(*defaults, input, err);
+    auto config = ask_configuration(*defaults, input, err, advanced);
     if (!config)
         return 1;
 
+    const auto preset = find_provider_preset((*config)["MAILAI_EMAIL"]);
+    const std::string_view credential_label =
+        preset ? preset->credential_label : std::string_view{"IMAP 客户端密码或授权码"};
     Password password;
-    err << "邮箱密码或授权码（输入隐藏）: " << std::flush;
+    err << credential_label << ": " << std::flush;
     if (!input.read_password(password.value) || password.value.empty()) {
         err << error_message::login_cli::password_missing << '\n';
         return 1;

@@ -126,7 +126,9 @@ def test_cli(executable, directory):
             db.execute("INSERT INTO sync_pending(account_id,folder,uid_validity,uid) "
                        "VALUES ('school','INBOX',77,100)")
         fixture.server.raw = SAMPLE_MAIL
+        before_sync = len(fixture.server.connection_times)
         output, error = invoke(executable, sync_env, ["sync"], 3)
+        assert len(fixture.server.connection_times) - before_sync == 1
         assert "新增" in output and "成功" in output and "失败" in output
         assert "100" in error and "remote_gone" in error
         assert fixture.server.fetch_requests == 2 and not fixture.server.seen
@@ -263,62 +265,70 @@ def test_login_terminal(executable, directory):
     secret = b"synthetic-invalid-login-password"
     with ImapFixture() as fixture:
         env = configure(env, fixture)
-        pid, fd = pty.fork()
-        if pid == 0:
-            os.execve(executable, [executable, "login"], env)
-        received = bytearray()
-        cursor = 0
-        reaped = False
-        deadline = time.monotonic() + 15
+        for command_args, prompts in (
+            (["login"], ("邮箱地址",)),
+            (["login", "--advanced"],
+             ("邮箱地址", "IMAP 服务器", "IMAP 用户名", "TLS 模式", "IMAP 端口", "邮件数据目录")),
+        ):
+            pid, fd = pty.fork()
+            if pid == 0:
+                os.execve(executable, [executable] + command_args, env)
+            received = bytearray()
+            cursor = 0
+            reaped = False
+            deadline = time.monotonic() + 15
 
-        def read_more():
-            remaining = deadline - time.monotonic()
-            assert remaining > 0, "interactive login timed out"
-            ready, _, _ = select.select([fd], [], [], remaining)
-            assert ready, "interactive login timed out"
-            try:
-                data = os.read(fd, 4096)
-            except OSError:
-                return False
-            received.extend(data)
-            return bool(data)
-
-        def expect_prompt(label):
-            nonlocal cursor
-            marker = label.encode()
-            while (index := received.find(marker, cursor)) < 0:
-                assert read_more(), (label, "login stopped before prompt")
-            cursor = index + len(marker)
-
-        try:
-            for label in ("邮箱地址", "IMAP 服务器", "IMAP 用户名",
-                          "TLS 模式", "IMAP 端口", "邮件数据目录"):
-                expect_prompt(label)
-                os.write(fd, b"\n")
-            expect_prompt("邮箱密码或授权码")
-            # 等待读取密码的终端关闭回显后再模拟用户输入。
-            while termios.tcgetattr(fd)[3] & termios.ECHO:
-                assert time.monotonic() < deadline, "password echo was not disabled"
-                time.sleep(0.01)
-            os.write(fd, secret + b"\n")
-            while read_more():
-                pass
-            _, status = os.waitpid(pid, 0)
-            reaped = True
-            assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 1
-            assert secret not in received and TEST_PASSWORD.encode() not in received
-            assert b"auth_error" in received
-            assert not (directory / ".config" / "mail-ai-assistant" / "login.conf").exists()
-            assert not (directory / "login-cache").exists()
-            assert fixture.server.search_requests == 0 and not fixture.server.seen
-        finally:
-            os.close(fd)
-            if not reaped:
+            def read_more():
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, "interactive login timed out"
+                ready, _, _ = select.select([fd], [], [], remaining)
+                assert ready, "interactive login timed out"
                 try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
+                    data = os.read(fd, 4096)
+                except OSError:
+                    return False
+                received.extend(data)
+                return bool(data)
+
+            def expect_prompt(label):
+                nonlocal cursor
+                marker = label.encode()
+                while (index := received.find(marker, cursor)) < 0:
+                    assert read_more(), (label, "login stopped before prompt")
+                cursor = index + len(marker)
+
+            try:
+                expect_prompt("邮箱地址")
+                os.write(fd, b"student@example.test\n")
+                for label in prompts[1:]:
+                    expect_prompt(label)
+                    os.write(fd, b"\n")
+                if command_args == ["login"]:
+                    expect_prompt("连接配置：")
+                expect_prompt("IMAP 客户端密码或授权码")
+                # 等待读取密码的终端关闭回显后再模拟用户输入。
+                while termios.tcgetattr(fd)[3] & termios.ECHO:
+                    assert time.monotonic() < deadline, "password echo was not disabled"
+                    time.sleep(0.01)
+                os.write(fd, secret + b"\n")
+                while read_more():
                     pass
-                os.waitpid(pid, 0)
+                _, status = os.waitpid(pid, 0)
+                reaped = True
+                assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 1
+                assert secret not in received and TEST_PASSWORD.encode() not in received
+                assert b"auth_error" in received
+                assert not (directory / ".config" / "mail-ai-assistant" / "login.conf").exists()
+                assert not (directory / "login-cache").exists()
+                assert fixture.server.search_requests == 0 and not fixture.server.seen
+            finally:
+                os.close(fd)
+                if not reaped:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    os.waitpid(pid, 0)
 
 
 if __name__ == "__main__":

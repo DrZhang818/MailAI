@@ -15,8 +15,11 @@ struct LoginInput {
 
 LoginInput terminal_login_input();
 
-int execute_login(
-    const MailServices& services, std::ostream& out, std::ostream& err, const LoginInput& input);
+int execute_login(const MailServices& services,
+    std::ostream& out,
+    std::ostream& err,
+    const LoginInput& input,
+    bool advanced = false);
 int execute_logout(const MailServices& services, std::ostream& out, std::ostream& err);
 
 }  // namespace mailai::cli

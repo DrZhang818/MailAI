@@ -29,7 +29,7 @@ inline constexpr char execution_failed[] = "Application execution failed";
 
 namespace mailai::error_message::login_cli {
 
-inline constexpr char login_usage[] = "Usage: login";
+inline constexpr char login_usage[] = "Usage: login [--advanced]";
 inline constexpr char logout_usage[] = "Usage: logout";
 inline constexpr char demo_forbidden[] = "Login and logout are not available in demo mode";
 inline constexpr char terminal_required[] = "Login requires an interactive macOS terminal";
@@ -56,7 +56,8 @@ inline constexpr char invalid_credential_reference[] =
 
 namespace mailai::error_message::login {
 
-inline constexpr char login_required[] = "No saved mailbox configuration; run mail_assistant login first";
+inline constexpr char login_required[] =
+    "No saved mailbox configuration; run mail_assistant login first";
 inline constexpr char invalid_login[] = "Mailbox settings or password are invalid";
 inline constexpr char absolute_data_dir_failed[] = "Cannot resolve an absolute cache directory";
 inline constexpr char rollback_failed[] =
@@ -227,7 +228,8 @@ inline constexpr char directory_unsafe[] = "Login profile directory is inaccessi
 inline constexpr char file_unsafe[] = "Login profile file is inaccessible or unsafe";
 inline constexpr char malformed[] = "Malformed login profile";
 inline constexpr char invalid_value[] = "Invalid login profile value";
-inline constexpr char absolute_data_dir_failed[] = "Cannot resolve an absolute login data directory";
+inline constexpr char absolute_data_dir_failed[] =
+    "Cannot resolve an absolute login data directory";
 inline constexpr char profile_too_large[] = "Login profile exceeds size limit";
 inline constexpr char read_failed[] = "Cannot read login profile";
 inline constexpr char write_failed[] = "Cannot write login profile";

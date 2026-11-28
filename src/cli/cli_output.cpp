@@ -60,14 +60,15 @@ void print_body_table(std::ostream& out, const BodyTable& table, const TerminalO
 
 void print_help(std::ostream& out) {
     out << "Usage:\n"
-           "  mail_assistant login\n"
+           "  mail_assistant login [--advanced]\n"
            "  mail_assistant logout\n"
            "  mail_assistant sync [--history <count> | --all]\n"
            "  mail_assistant [--demo] inbox [--account <id|all>]\n"
            "  mail_assistant [--demo] find <keyword>\n"
            "  mail_assistant [--demo] show <mail-id>\n"
            "  mail_assistant --help\n"
-           "login 交互配置账号；logout 清除登录凭据并保留邮件缓存。\n"
+           "login 交互配置账号（默认仅询问邮箱和密码，--advanced 可自定义服务器与目录）；logout "
+           "清除登录凭据并保留邮件缓存。\n"
            "默认读取本地缓存；--demo 仅查看虚构邮件。\n";
 }
 

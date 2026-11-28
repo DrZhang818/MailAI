@@ -451,12 +451,14 @@ void test_login_and_logout_arguments() {
     for (const auto& command : {"login", "logout"}) {
         const auto help = invoke_with({command, "--help"}, services);
         expect_success(help);
-        expect(contains(help.out, "mail_assistant login") &&
+        expect(contains(help.out, "mail_assistant login [--advanced]") &&
                    contains(help.out, "mail_assistant logout"),
             "login and logout are documented");
         expect_failure(invoke_with({"--demo", command}, services), 2);
         expect_failure(invoke_with({command, "extra"}, services), 2);
     }
+    expect_failure(invoke_with({"logout", "--advanced"}, services), 2);
+    expect_failure(invoke_with({"login", "--advanced", "extra"}, services), 2);
     const auto invalid = invoke_with({"login", "--password", "sample-secret"}, services);
     expect_failure(invalid, 2);
     expect(!contains(invalid.err, "sample-secret"), "bad arguments never echo password values");
@@ -478,7 +480,7 @@ void test_login_defaults_and_no_secret_output() {
         expect(password == secret, "password reaches service unchanged");
         return {};
     };
-    std::istringstream lines("student@bjtu.edu.cn\n\n\n\n\n\n");
+    std::istringstream lines("student@bjtu.edu.cn\n");
     const cli::LoginInput input{
         [&](std::string& line) { return static_cast<bool>(std::getline(lines, line)); },
         [&](std::string& password) {
@@ -496,10 +498,32 @@ void test_login_defaults_and_no_secret_output() {
                captured.at("MAILAI_DATA_DIR") == "/test/home/.local/share/mail-ai-assistant" &&
                !captured.contains("MAILAI_PASSWORD_ENV"),
         "fresh login uses known provider and secure transport defaults");
+    expect(contains(result.err, "连接配置：mail.bjtu.edu.cn:993 (TLS)") &&
+               contains(result.err, "客户端专用密码: ") && !contains(result.err, "输入隐藏") &&
+               !contains(result.err, "TLS 模式") && !contains(result.err, "IMAP 端口") &&
+               !contains(result.err, "邮件数据目录"),
+        "default login uses provider-specific prompt and skips redundant prompts");
     for (const auto& [key, value] : captured)
         expect(!contains(value, secret), "configuration never contains the password");
     expect(!contains(result.out, secret) && !contains(result.err, secret),
         "login output never contains password");
+
+    lines = std::istringstream("user@qq.com\n");
+    result = invoke_with({"login"}, services, {}, input);
+    expect(result.code == 0 && captured.at("MAILAI_IMAP_HOST") == "imap.qq.com" &&
+               captured.at("MAILAI_IMAP_TLS") == "implicit" &&
+               captured.at("MAILAI_IMAP_PORT") == "993" &&
+               contains(result.err, "IMAP 授权码（非登录密码）: "),
+        "preset providers resolve host, port, and credential prompt automatically");
+
+    lines = std::istringstream("user@example.test\nmail.example.test\n");
+    result = invoke_with({"login"}, services, {}, input);
+    expect(result.code == 0 && captured.at("MAILAI_IMAP_HOST") == "mail.example.test" &&
+               captured.at("MAILAI_IMAP_USER") == "user@example.test" &&
+               captured.at("MAILAI_IMAP_TLS") == "implicit" &&
+               captured.at("MAILAI_IMAP_PORT") == "993" &&
+               contains(result.err, "IMAP 客户端密码或授权码: "),
+        "unknown domain only asks for IMAP host in default login");
 
     services.login_defaults = [] {
         return Result<Environment>{
@@ -511,14 +535,15 @@ void test_login_defaults_and_no_secret_output() {
                 {"MAILAI_IMAP_PORT", "999"}}
         };
     };
-    lines = std::istringstream("\n\n\nstarttls\n\n~/chosen\n");
-    result = invoke_with({"login"}, services, {}, input);
+    lines = std::istringstream("user@example.test\n\n\nstarttls\n\n~/chosen\n");
+    result = invoke_with({"login", "--advanced"}, services, {}, input);
     expect(result.code == 0 && captured.at("MAILAI_IMAP_HOST") == "mail.example.test" &&
                captured.at("MAILAI_IMAP_USER") == "other-user" &&
                captured.at("MAILAI_IMAP_TLS") == "starttls" &&
                captured.at("MAILAI_IMAP_PORT") == "143" &&
-               captured.at("MAILAI_DATA_DIR") == "/test/home/chosen",
-        "remembered settings are accepted and changing TLS selects matching default port");
+               captured.at("MAILAI_DATA_DIR") == "/test/home/chosen" &&
+               !contains(result.err, "邮箱地址 [user@example.test]"),
+        "advanced login accepts remembered settings without echoing saved email");
 }
 
 void test_login_cancellation_and_failure() {
@@ -532,7 +557,7 @@ void test_login_cancellation_and_failure() {
         return std::unexpected(
             Error{ErrorCode::auth_error, "Invalid password: " + secret, {}, {}, "imap.connect"});
     };
-    std::istringstream lines("user@example.test\nmail.example.test\n\n\n\n\n");
+    std::istringstream lines("user@example.test\nmail.example.test\n");
     cli::LoginInput input{
         [&](std::string& line) { return static_cast<bool>(std::getline(lines, line)); },
         [&](std::string&) {
@@ -553,17 +578,17 @@ void test_login_cancellation_and_failure() {
     expect(calls == 0 && password_reads == 1,
         "unknown provider cannot silently supply a guessed host");
 
-    lines = std::istringstream("user@example.test\nimap://mail.example.test\n\n\n\n\n");
+    lines = std::istringstream("user@example.test\nimap://mail.example.test\n");
     const auto invalid_host = invoke_with({"login"}, services, {}, input);
     expect_failure(invalid_host, 1);
     expect(calls == 0 && password_reads == 1,
         "a server URL is rejected before prompting for a password");
 
     lines = std::istringstream("user@example.test\nmail.example.test\n\n\n65536\n\n");
-    expect_failure(invoke_with({"login"}, services, {}, input), 1);
+    expect_failure(invoke_with({"login", "--advanced"}, services, {}, input), 1);
     expect(calls == 0 && password_reads == 1, "invalid port rejected before password prompt");
 
-    lines = std::istringstream("user@example.test\nmail.example.test\n\n\n\n\n");
+    lines = std::istringstream("user@example.test\nmail.example.test\n");
     input.read_password = [&](std::string& password) {
         password = secret;
         return true;

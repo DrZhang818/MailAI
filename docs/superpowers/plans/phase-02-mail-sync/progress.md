@@ -1,6 +1,6 @@
 # 阶段 2 进度
 
-对应[阶段计划](plan.md)。阶段尚未整体验收。表中保留先前验收记录，并在完成后补充新的实际验证结果。
+对应[阶段计划](plan.md)。阶段 2（AC-1 至 AC-10）已完成整体验收。表中保留先前验收记录，并记录最新的实际验证结果。
 
 | 任务 | 状态 | 既有结果与证据 |
 |---|---|---|
@@ -46,8 +46,11 @@
 | Task 7：历史补收 | 本机验证通过 | 用户确认同时提供 `sync --history N` 和 `sync --all`。普通同步仍保留首次最近 20 封、后续增量和重试语义；显式补收按未缓存的旧 UID 选择，已缓存或已登记的任务不占补收名额。新增同步、存储、CLI、MIME 及实际命令回环用例覆盖去重、重试、发现水位保持、事务回滚、表格展示和搜索。Debug／Release 全套 CTest 各 21/21 通过，随后新增两个历史命令的实际 CLI 回归测试，两种构建均通过；独立审查未发现阻塞问题。 |
 | Task 7：macOS 交互式登录与记忆 | 本机验证通过 | 经用户确认先实现 macOS 版本。新增 `login`／`logout`，登录先校验邮箱及缓存身份，再保存非秘密配置和原缓存路径，密码使用系统钥匙串；退出只移除凭据，保留离线缓存。明确环境变量优先，不混用旧凭据。测试覆盖私有配置权限、原子保存、失败恢复、账号隔离、路径别名、旧缓存兼容、钥匙串请求、真实伪终端密码隐藏和虚构 TLS 认证；Debug／Release 各 24/24 通过，构建无警告。未操作真实钥匙串或真实邮箱。Linux 登录功能暂不实现。 |
 | Task 7：缓存文件权限保护 | 子步骤通过 | 经用户确认，修复实际同步命令创建缓存时依赖默认权限的问题。新建缓存目录使用 0700；持有数据目录锁后、打开 SQLite 前，将主库及已有 WAL、SHM 和日志文件保护为 0600。已有目录不更改权限，非当前用户所有或其他用户可写的目录拒绝同步。新增临时虚构邮箱 CLI 回归测试先因新目录权限及路径尾部斜杠两个问题失败，分别修复后 Debug／Release 的 CLI 集成测试均通过；并验证旧缓存原 ID 保留、无重复下载、已有目录和无关文件权限不变、危险目录不触发连接。未读取或修改用户真实缓存。 |
-| Task 7：真实邮箱与阶段验收 | 继续验证 | 已完成真实邮箱配置、试收和首次正式同步，展示、检索、历史补收和 macOS 登录均已通过虚构邮箱和临时缓存验证。2026-11-28 重新完整构建 macOS Debug／Release（含显式探针），均无构建警告；缓存权限修复后再次构建并运行默认 CTest，各 24/24 通过，独立虚构 TLS 探针测试两种构建均通过。用户表示其余真实邮箱检查可能已完成，但尚未提供可确认的结果；真实钥匙串登录、关闭终端后重新同步、新版展示、离线查询及服务器已读状态仍待确认，AC-9 未完成。 |
+| Task 7：阶段 2 收尾前结构与会话复用整理 | 本机验证通过 | 按用户要求由助手直接实施四项维护改进：1）在 `CMakeLists.txt` 封装 `mailai_build_options`、`mailai_configure_target`、`mailai_add_test_executable`、`mailai_add_unit_test` 和 `mailai_add_python_test`，统一编译选项与测试注册；2）提取 `src/util/secure_fs.{h,cpp}` 复用文件描述符与目录安全原语，统一 `login_profile.cpp` 与 `services.cpp` 的 `openat` 检查、替换 `::arc4random()` 为 `std::random_device` + `std::mt19937_64`，并在 `renameat` 后调用 `sync_directory`；3）从 `src/mail/mime.cpp` 拆出 `src/mail/html_extract.{h,cpp}`；4）新增 `ImapSession`（`include/mailai/imap.h`、`src/mail/imap.cpp`），结合 `FetchTransfer`（`src/mail/imap_protocol.{h,cpp}`）的继承 `UIDVALIDITY` 跟踪，在单轮 `sync_inbox` 与 `imap_live_probe` 中复用同一 IMAP TLS 连接并覆盖断连重试与 `UIDVALIDITY` 变更校验。2026-11-28 完成 macOS Debug 与 Release 构建（含 `imap_live_probe`），均 0 警告；全套默认 CTest Debug／Release 各 24/24 通过，独立虚构 TLS 探针测试（`imap_live_probe_test.py`）Debug／Release 均通过。 |
+| Task 7：真实邮箱与阶段验收 | 完成 | 已完成真实邮箱配置、试收和首次正式同步，展示、检索、历史补收和 macOS 登录均已通过虚构邮箱和临时缓存验证。2026-11-28 重新完整构建 macOS Debug／Release（含显式探针），均无构建警告；维护整理及缓存权限修复后再次构建并运行默认 CTest，各 24/24 通过，独立虚构 TLS 探针测试两种构建均通过。同日直接开展 ASan+UBSan 回归（0 警告，24/24 CTest 与 `imap_live_probe_test.py` 全通过，0 内存或未定义行为告警）及脱敏真实邮箱复核：已登录配置与目录权限为 `0700`/`0600`，缓存目录与 `cache.sqlite3`（含 `-wal`/`-shm`）为 `0700`/`0600`；连续两轮 `mail_assistant sync` 均退出 0（`新增 0 封，成功 0 封，失败 0 封`），`inbox` 保持 22 封且 ID `1..22` 不变，`show` 正常读取缓存正文；在隔离空 `HOME`/`XDG_CONFIG_HOME` 且无凭据条件下 `inbox` 与 `show` 仍正常退出 0 且结果一致；`--demo inbox` 正常返回示例数据。用户已确认学校邮箱网页端中原本未读的邮件在同步后仍保持未读状态，AC-9 完成。 |
+| Task 7：阶段收尾审查修复 | 完成 | 2026-11-28 经 Codex（`gpt-6.2-sol`、`xhigh`）只读审查与作用域修复：1）修复快照和 FETCH 在清理句柄前解除 libcurl 回调的顺序；2）FETCH 按字节分离原文后继续检查 `UIDVALIDITY`，普通 `EXISTS` 保留已选邮箱身份，重连要求重新观察该值；3）校验 `open_at` 单一文件名、重试 `EINTR` 目录同步、捕获登录临时文件名随机源异常，并在配置替换后目录同步失败时输出脱敏诊断、保留新凭据；4）SQLite 打开启用 `SQLITE_OPEN_NOFOLLOW`，缓存服务复核目录身份；5）补充上述行为与 HTML 表格累计预算回归用例，并同步修正 `session-idle-reconnect` 对重连凭据次数的断言。`clang-format` 检查通过，macOS Debug 与 Release（含 `imap_live_probe`）均 0 警告构建通过，全套默认 CTest 各 24/24 通过，独立虚构 TLS 探针测试（`imap_live_probe_test.py`）Debug／Release 均通过。ASan+UBSan 全量构建与测试同样全通过。AC-10 本机验收完成。 |
+| Task 7：`login` 极简交互与高级选项 | 完成 | 2026-11-28 按用户反馈简化 `mail_assistant login` 默认交互：内置常见邮箱预设表（北交大、QQ/Foxmail、163、126、yeah.net、Gmail、Outlook/Hotmail/Live、iCloud），已知邮箱或已有配置仅需输入邮箱地址与密码 2 步完成并回显一行 `连接配置`，未知域名额外补问 IMAP 服务器；原有用户名、TLS 模式、端口与数据目录自定义收归 `mail_assistant login --advanced`。`clang-format` 检查通过，CLI 单元测试、实际伪终端集成测试与 README 已同步更新；macOS Debug 与 Release（含 `imap_live_probe`）均 0 警告构建通过，全套默认 CTest 各 24/24 通过，`imap_live_probe_test.py` 两种构建均通过。 |
 
-当前接续位置：Task 7 第 3 步，已完成首次正式同步，以及用户反馈的展示、检索、历史补收和 macOS 登录功能改进。Task 1 至 Task 6 已完成本机验收，真实邮箱试收和阶段本机回归已通过；剩余真实邮箱验收尚待确认。后续状态及证据仅更新本文件，正式计划保持不变。
+当前接续位置：阶段 2（Task 1 至 Task 7，AC-1 至 AC-10）已全部完成验收，可整理提交收尾改动并规划阶段 3（AI 分析与汇报）。
 
 新库使用最初的版本 1 账号表定义。使用提交 `d0c9410` 中另一种缩进创建的数据库也可以打开，原有结构和数据保留。详见[生命周期设计](../../specs/mail-ai-assistant-sqlite-lifecycle-design.md)第 4.1 节。

@@ -25,6 +25,7 @@ struct Command {
     InboxQuery query;
     MailId id{};
     std::size_t history_limit{};
+    bool advanced_login{};
 };
 
 using ParseResult = std::expected<Command, std::string_view>;
@@ -121,11 +122,16 @@ ParseResult parse_command(std::span<const std::string> args) {
         case CommandKind::sync:
             return parse_sync(args, command);
         case CommandKind::login:
+            if (args.size() == 2 && args[1] == "--advanced") {
+                command.advanced_login = true;
+                return command;
+            }
+            if (args.size() != 1)
+                return std::unexpected(error_message::login_cli::login_usage);
+            return command;
         case CommandKind::logout:
             if (args.size() != 1)
-                return std::unexpected(command.kind == CommandKind::login
-                                           ? error_message::login_cli::login_usage
-                                           : error_message::login_cli::logout_usage);
+                return std::unexpected(error_message::login_cli::logout_usage);
             return command;
         case CommandKind::help:
             return command;
@@ -201,7 +207,7 @@ int run_cli(const std::vector<std::string>& args,
         case CommandKind::sync:
             return execute_sync(*command, services, out, err);
         case CommandKind::login:
-            return execute_login(services, out, err, login_input);
+            return execute_login(services, out, err, login_input, command->advanced_login);
         case CommandKind::logout:
             return execute_logout(services, out, err);
     }
