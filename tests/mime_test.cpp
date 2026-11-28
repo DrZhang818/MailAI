@@ -167,6 +167,51 @@ void expect_overwide_table_text_fallback() {
         "overwide table fallback should keep all cell text and following content");
 }
 
+void expect_cumulative_table_cell_limit() {
+    std::string raw = "Content-Type: text/html; charset=UTF-8\n\n";
+    // 两个 500 × 100 的表格刚好用完 100,000 个单元格的预算。
+    for (int table = 0; table < 2; ++table) {
+        raw += "<table>";
+        for (int row = 0; row < 500; ++row) {
+            raw += "<tr><td colspan='100'>cell</td></tr>";
+        }
+        raw += "</table>";
+    }
+    raw += "<table><tr><td>overflow cell</td></tr></table>";
+
+    const auto blocks = parse_blocks(raw);
+    expect(blocks.size() == 3, "the cell after the cumulative limit should become text");
+    for (std::size_t index = 0; index < 2; ++index) {
+        const auto* table = std::get_if<mailai::BodyTable>(&blocks[index]);
+        expect(table && table->rows.size() == 500 && table->rows.back().size() == 100,
+            "a complete table at the cumulative cell limit should remain structured");
+    }
+    expect_text_block(blocks.back(), "overflow cell");
+}
+
+void expect_rowspan_repeated_byte_limit() {
+    const std::string repeated(20 * 1024, 'a');
+    std::string raw =
+        "Content-Type: text/html; charset=UTF-8\n\n"
+        "<table><tr><td rowspan='0'>";
+    raw += repeated + "</td></tr>";
+    // 跨行复制 1,024 次，恰好消耗 20 MiB；下一张表再复制 1 字节时应回退成文本。
+    for (int row = 0; row < 1024; ++row) {
+        raw += "<tr><td>row</td></tr>";
+    }
+    raw +=
+        "</table><table><tr><td rowspan='2'>x</td></tr>"
+        "<tr><td>overflow rowspan</td></tr></table>";
+
+    const auto blocks = parse_blocks(raw);
+    expect(blocks.size() == 2, "only the table beyond the repeated-byte limit should become text");
+    const auto* table = std::get_if<mailai::BodyTable>(&blocks.front());
+    expect(table && table->rows.size() == 1025 && !table->rows.back().empty() &&
+               table->rows.back().front() == repeated,
+        "a rowspan at the repeated-byte limit should retain its last copy");
+    expect_text_block(blocks.back(), "x\noverflow rowspan");
+}
+
 void expect_body_blocks_fallback() {
     expect(parse_blocks("Content-Type: text/plain; charset=UTF-8\n\n正文").empty(),
         "plain text should use the existing stored body");
@@ -345,6 +390,12 @@ int main() {
 
         current_sample = "overwide table fallback";
         expect_overwide_table_text_fallback();
+
+        current_sample = "cumulative HTML table cell limit";
+        expect_cumulative_table_cell_limit();
+
+        current_sample = "rowspan repeated-byte limit";
+        expect_rowspan_repeated_byte_limit();
 
         current_sample = "structured body fallback";
         expect_body_blocks_fallback();

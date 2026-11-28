@@ -90,6 +90,31 @@ const char* update_uid_validity(std::string_view line, std::uint32_t& current) {
     return nullptr;
 }
 
+const char* check_fetch_validity(
+    std::string_view ok_text, std::uint32_t expected, std::uint32_t& observed) {
+    std::uint32_t reported = 0;
+    if (const auto* message = update_uid_validity(ok_text, reported)) {
+        return message;
+    }
+    if (reported != 0) {
+        if (reported != expected) {
+            return errors::uid_validity_changed;
+        }
+        observed = reported;
+    }
+    return nullptr;
+}
+
+ErrorCode fetch_response_error_code(const char* message) {
+    if (message == errors::uid_validity_changed) {
+        return ErrorCode::remote_gone;
+    }
+    if (message == errors::service_unavailable) {
+        return ErrorCode::network_error;
+    }
+    return ErrorCode::protocol_error;
+}
+
 constexpr std::size_t max_raw_bytes = 20 * 1024 * 1024;
 constexpr std::size_t max_fetch_response_bytes = max_raw_bytes + 256 * 1024;
 
@@ -207,42 +232,49 @@ FetchListEnd read_fetch_fields(std::string_view text, FetchFields& fields) {
     return FetchListEnd::invalid;
 }
 
-struct FetchCompletion {
-    FetchFields fields;
-    bool temporarily_unavailable{};
-};
-
-// 解析 BODY[] 之后的属性和命令结果，区分成功与明确的临时服务错误。
-std::optional<FetchCompletion> finish_fetch_fields(std::string_view response, FetchFields fields) {
+// 从原文结束的位置继续解析 FETCH 属性和协议响应，检查命令结果及邮件标识。
+std::expected<FetchFields, const char*> finish_fetch_fields(std::string_view response,
+    FetchFields fields,
+    std::uint32_t expected_validity,
+    std::uint32_t& observed_validity) {
     const auto suffix = take_response_line(response);
     if (!suffix || read_fetch_fields(*suffix, fields) != FetchListEnd::closed)
-        return std::nullopt;
+        return std::unexpected(errors::invalid_fetch_response);
     while (const auto line = take_response_line(response)) {
         if (is_service_unavailable(*line)) {
-            return FetchCompletion{fields, true};
+            return std::unexpected(errors::service_unavailable);
         }
         if (const auto list = fetch_list(*line)) {
             FetchFields extra;
             if (read_fetch_fields(*list, extra) != FetchListEnd::closed)
-                return std::nullopt;
+                return std::unexpected(errors::invalid_fetch_response);
         } else {
             auto rest = *line;
             const auto tag = take_word(rest);
             const auto kind = take_word(rest);
+            const bool ok = ascii_iequal(kind, "OK");
+            if (!tag.empty() && tag != "+" && ok) {
+                if (const auto* message =
+                        check_fetch_validity(rest, expected_validity, observed_validity)) {
+                    return std::unexpected(message);
+                }
+            }
             if (!tag.empty() && tag != "*" && tag != "+") {
-                return ascii_iequal(kind, "OK") && response.empty()
-                           ? std::optional{FetchCompletion{fields}}
-                           : std::nullopt;
+                if (ok && response.empty()) {
+                    return fields;
+                }
+                break;
             }
         }
     }
-    return std::nullopt;
+    return std::unexpected(errors::invalid_fetch_response);
 }
 
 struct FetchLiteral {
-    FetchCompletion completion;
+    FetchFields fields;
     std::string_view body;
     std::string_view overflow;
+    std::string_view response;
 };
 
 std::optional<FetchLiteral> separate_fetch_literal(std::string_view headers,
@@ -274,16 +306,13 @@ std::optional<FetchLiteral> separate_fetch_literal(std::string_view headers,
     if (remainder.size() < missing) {
         return std::nullopt;
     }
-    const auto complete = finish_fetch_fields(remainder.substr(missing), fields);
-    if (!complete) {
-        return std::nullopt;
-    }
-    return FetchLiteral{*complete, body, remainder.substr(0, missing)};
+    return FetchLiteral{fields, body, remainder.substr(0, missing), remainder.substr(missing)};
 }
 
 }  // namespace
 
-FetchTransfer::FetchTransfer(const RemoteKey& remote_key) : key(remote_key) {}
+FetchTransfer::FetchTransfer(const RemoteKey& remote_key, std::uint32_t inherited)
+    : key(remote_key), inherited_validity(inherited == remote_key.uid_validity ? inherited : 0) {}
 
 bool FetchTransfer::fail(const char* message, ErrorCode code) noexcept {
     error = message;
@@ -314,22 +343,18 @@ bool FetchTransfer::append_header(std::string_view data) {
     const auto tag = take_word(rest);
     const auto kind = take_word(rest);
     if (!tag.empty() && tag != "+" && ascii_iequal(kind, "OK")) {
-        if (const auto* message = update_uid_validity(rest, validity)) {
-            return fail(message);
+        if (const auto* message = check_fetch_validity(rest, key.uid_validity, observed_validity)) {
+            return fail(message, fetch_response_error_code(message));
         }
-        if (validity && validity != key.uid_validity) {
-            return fail(errors::uid_validity_changed, ErrorCode::remote_gone);
-        }
-        if (selecting && tag != "*" && !validity) {
+        const auto code = take_word(rest);
+        if (tag != "*" && !observed_validity &&
+            (ascii_iequal(code, "[READ-ONLY]") || ascii_iequal(code, "[READ-WRITE]"))) {
             return fail(errors::missing_uid_validity);
         }
-    } else if (tag == "*" &&
-               (ascii_iequal(kind, "FLAGS") || ascii_iequal(take_word(rest), "EXISTS"))) {
-        selecting = true;
     }
 
     if (const auto list = fetch_list(line)) {
-        if (!validity)
+        if (!observed_validity && inherited_validity != key.uid_validity)
             return fail(errors::missing_uid_validity);
         FetchFields fields;
         switch (read_fetch_fields(*list, fields)) {
@@ -358,7 +383,8 @@ void FetchTransfer::abort() noexcept {
     fail(errors::invalid_fetch_response);
 }
 
-Result<FetchedMail> FetchTransfer::finish(std::optional<Error> transport_error) const {
+Result<FetchedMail> FetchTransfer::finish(
+    std::optional<Error> transport_error, bool require_observed_validity) const {
     auto failure = [&](ErrorCode code, const char* message) {
         return std::unexpected(Error{
             .code = code,
@@ -374,13 +400,22 @@ Result<FetchedMail> FetchTransfer::finish(std::optional<Error> transport_error) 
     }
     const auto literal =
         separate_fetch_literal(headers, payload, prefix_offset, literal_offset, literal_size);
-    if (literal && literal->completion.temporarily_unavailable) {
-        return failure(ErrorCode::network_error, errors::service_unavailable);
+    auto validity = observed_validity;
+    std::expected<FetchFields, const char*> fields =
+        std::unexpected(errors::invalid_fetch_response);
+    if (literal) {
+        fields =
+            finish_fetch_fields(literal->response, literal->fields, key.uid_validity, validity);
+        if (!fields && fields.error() != errors::invalid_fetch_response) {
+            return failure(fetch_response_error_code(fields.error()), fields.error());
+        }
     }
     if (transport_error) {
         return std::unexpected(std::move(*transport_error));
     }
-    if (!validity) {
+    const bool has_validity =
+        validity != 0 || (!require_observed_validity && inherited_validity == key.uid_validity);
+    if (!has_validity) {
         return failure(ErrorCode::protocol_error, errors::missing_uid_validity);
     }
     if (!prefix_offset) {
@@ -388,10 +423,10 @@ Result<FetchedMail> FetchTransfer::finish(std::optional<Error> transport_error) 
                    ? failure(ErrorCode::protocol_error, errors::invalid_fetch_response)
                    : failure(ErrorCode::remote_gone, errors::remote_mail_gone);
     }
-    if (!literal || literal->completion.fields.uid != key.uid || !literal->completion.fields.date) {
+    if (!fields || fields->uid != key.uid || !fields->date) {
         return failure(ErrorCode::protocol_error, errors::invalid_fetch_response);
     }
-    const auto received_at = parse_internal_date(*literal->completion.fields.date, key.account_id);
+    const auto received_at = parse_internal_date(*fields->date, key.account_id);
     if (!received_at) {
         return std::unexpected(received_at.error());
     }

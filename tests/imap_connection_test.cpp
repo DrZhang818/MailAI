@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "mail/imap_transport.h"
@@ -100,9 +101,9 @@ void expect_fetch(const mailai::RuntimeConfig& config, std::string_view scenario
         key.uid = 102;
 
     const auto result = mailai::fetch_mail(config, key);
-    if (scenario == "ok" || scenario == "provider" || scenario == "timeout-recover" || scenario == "body-first" ||
-        scenario == "flags-before" || scenario == "binary" || scenario == "no-final-crlf" ||
-        scenario == "at-limit") {
+    if (scenario == "ok" || scenario == "provider" || scenario == "timeout-recover" ||
+        scenario == "body-first" || scenario == "flags-before" || scenario == "binary" ||
+        scenario == "no-final-crlf" || scenario == "at-limit") {
         expect(result.has_value(), "valid UID FETCH should return a mail");
         expect(result->key.account_id == key.account_id && result->key.folder == key.folder &&
                    result->key.uid_validity == key.uid_validity && result->key.uid == key.uid,
@@ -149,6 +150,75 @@ void expect_fetch(const mailai::RuntimeConfig& config, std::string_view scenario
         "error should not include the test password or message contents");
 }
 
+void expect_session(mailai::RuntimeConfig config, std::string_view scenario) {
+    const bool idle_disconnect = scenario.starts_with("idle-");
+    int credential_requests = 0;
+    if (idle_disconnect) {
+        config.credential_provider = [&] {
+            ++credential_requests;
+            return std::string{"fixture-only-password"};
+        };
+    }
+    mailai::ImapSession session{config};
+    const auto snapshot = session.read_mailbox_snapshot();
+    expect(snapshot.has_value() && snapshot->uid_validity == 77,
+        "session snapshot should succeed with UIDVALIDITY 77");
+
+    const mailai::RemoteKey present{config.account.id, "INBOX", 77, 101};
+    const mailai::RemoteKey missing{config.account.id, "INBOX", 77, 102};
+
+    if (idle_disconnect) {
+        // 等待服务端关闭快照使用的连接，再发起 FETCH。
+        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        const auto result = session.fetch_mail(present);
+        // libcurl 可以复用原句柄重连，应用层也可以重试并重建一次句柄。
+        expect(credential_requests >= 1 && credential_requests <= 2,
+            "idle reconnect should use the original easy handle or rebuild it once");
+        if (scenario == "idle-reconnect") {
+            expect(result.has_value(), "reconnected session must accept matching UIDVALIDITY");
+        } else if (scenario == "idle-reconnect-stale") {
+            expect(!result && result.error().code == mailai::ErrorCode::remote_gone &&
+                       result.error().message == mailai::error_message::imap::uid_validity_changed,
+                "reconnected session must reject changed UIDVALIDITY");
+        } else {
+            expect(!result && result.error().code == mailai::ErrorCode::protocol_error &&
+                       result.error().message == mailai::error_message::imap::missing_uid_validity,
+                "reconnected session must reject missing UIDVALIDITY");
+        }
+        return;
+    }
+
+    if (scenario == "reuse") {
+        const auto first = session.fetch_mail(present);
+        expect(first.has_value() && first->key.uid == 101, "first session fetch should succeed");
+        const auto gone = session.fetch_mail(missing);
+        expect(!gone && gone.error().code == mailai::ErrorCode::remote_gone,
+            "missing UID should return remote_gone");
+        const auto second = session.fetch_mail(present);
+        expect(second.has_value() && second->raw == first->raw,
+            "session fetch after remote_gone should reuse the connection");
+        return;
+    }
+
+    if (scenario == "reconnect") {
+        const auto recovered = session.fetch_mail(present);
+        expect(recovered.has_value(), "session fetch should recover after disconnect");
+        const auto reused = session.fetch_mail(present);
+        expect(reused.has_value() && reused->raw == recovered->raw,
+            "session should reuse the reconnected handle");
+        return;
+    }
+
+    if (scenario == "stale-reconnect") {
+        const auto stale = session.fetch_mail(present);
+        expect(!stale && stale.error().code == mailai::ErrorCode::remote_gone,
+            "stale UIDVALIDITY on reconnect should return remote_gone");
+        return;
+    }
+
+    throw std::runtime_error("unknown session scenario");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -157,10 +227,13 @@ int main(int argc, char** argv) {
         const std::string_view operation{argv[4]};
         constexpr std::string_view snapshot_prefix = "snapshot-";
         constexpr std::string_view fetch_prefix = "fetch-";
+        constexpr std::string_view session_prefix = "session-";
         const bool read_snapshot = operation.starts_with(snapshot_prefix);
         const bool fetch = operation.starts_with(fetch_prefix);
+        const bool session = operation.starts_with(session_prefix);
         const auto scenario = read_snapshot ? operation.substr(snapshot_prefix.size())
                               : fetch       ? operation.substr(fetch_prefix.size())
+                              : session     ? operation.substr(session_prefix.size())
                                             : operation;
         mailai::RuntimeConfig config;
         config.account.id = "imap-fixture";
@@ -176,6 +249,10 @@ int main(int argc, char** argv) {
         config.imap.total_timeout = std::chrono::seconds{5};
         if (scenario != "untrusted") {
             config.imap.ca_file = argv[2];
+        }
+        if (session) {
+            expect_session(config, scenario);
+            return 0;
         }
         if (fetch) {
             if (scenario.starts_with("timeout"))

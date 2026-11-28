@@ -21,11 +21,13 @@
 #include "mailai/mime.h"
 #include "mailai/store.h"
 #include "mailai/sync.h"
+#include "util/secure_fs.h"
 
 namespace mailai {
 namespace {
 
 constexpr char cache_filename[] = "cache.sqlite3";
+constexpr const char* cache_sidecar_suffixes[] = {"-wal", "-shm", "-journal"};
 
 Error filesystem_error(std::string message, const std::error_code& error) {
     return {
@@ -41,17 +43,39 @@ Error cache_permission_error(const char* message) {
     return {ErrorCode::storage_error, message, std::nullopt, std::nullopt, "storage.directory"};
 }
 
-// 新建应用目录时直接使用私有权限；已有目录只检查，不修改其权限。
-Status prepare_cache_directory(const std::filesystem::path& directory) {
-    namespace errors = error_message::storage;
+// 去掉末尾的空路径分量和当前目录分量，保留其他路径解析语义。
+std::filesystem::path normalized_directory(const std::filesystem::path& directory) {
     auto target = directory;
-    // 去掉末尾的空路径分量和当前目录分量，保留其他路径解析语义。
     while (target.filename().empty() || target.filename() == ".") {
         const auto parent = target.parent_path();
         if (parent.empty() || parent == target)
             break;
         target = parent;
     }
+    return target;
+}
+
+// 打开缓存目录并检查归属与写权限。缓存目录沿用原有语义，允许最后一级为指向本人目录的
+// 符号链接；之后的文件操作都相对这个已检查的描述符进行。
+Result<secure_fs::UniqueFd> open_cache_directory(const std::filesystem::path& directory) {
+    namespace errors = error_message::storage;
+    auto fd = secure_fs::open_directory(directory, secure_fs::FollowLink::yes);
+    if (!fd)
+        return std::unexpected(filesystem_error(errors::inspect_cache_failed, fd.error()));
+    const auto info = secure_fs::stat_fd(fd->get());
+    if (!info)
+        return std::unexpected(filesystem_error(errors::inspect_cache_failed, info.error()));
+    if (!S_ISDIR(info->st_mode) || !secure_fs::owned_by_current_user(*info) ||
+        (info->st_mode & 0022) != 0) {
+        return std::unexpected(cache_permission_error(errors::unsafe_cache_directory));
+    }
+    return std::move(*fd);
+}
+
+// 新建应用目录时使用私有权限，并保留已检查的目录描述符供后续操作使用。
+Result<secure_fs::UniqueFd> prepare_cache_directory(const std::filesystem::path& directory) {
+    namespace errors = error_message::storage;
+    const auto target = normalized_directory(directory);
     std::error_code error;
     if (!target.parent_path().empty()) {
         std::filesystem::create_directories(target.parent_path(), error);
@@ -63,76 +87,89 @@ Status prepare_cache_directory(const std::filesystem::path& directory) {
             errors::create_directory_failed, std::error_code{errno, std::generic_category()}));
     }
 
-    struct stat info{};
-    if (::stat(target.c_str(), &info) != 0) {
-        return std::unexpected(filesystem_error(
-            errors::inspect_cache_failed, std::error_code{errno, std::generic_category()}));
-    }
-    if (!S_ISDIR(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 0022) != 0) {
+    return open_cache_directory(target);
+}
+
+Status verify_cache_directory_identity(const std::filesystem::path& path, int directory_fd) {
+    namespace errors = error_message::storage;
+    const auto resolved = secure_fs::open_directory(path, secure_fs::FollowLink::no);
+    if (!resolved)
+        return std::unexpected(filesystem_error(errors::inspect_cache_failed, resolved.error()));
+    const auto checked = secure_fs::stat_fd(directory_fd);
+    if (!checked)
+        return std::unexpected(filesystem_error(errors::inspect_cache_failed, checked.error()));
+    const auto current = secure_fs::stat_fd(resolved->get());
+    if (!current)
+        return std::unexpected(filesystem_error(errors::inspect_cache_failed, current.error()));
+    if (checked->st_dev != current->st_dev || checked->st_ino != current->st_ino)
         return std::unexpected(cache_permission_error(errors::unsafe_cache_directory));
-    }
     return {};
 }
 
-class CacheFileDescriptor {
-public:
-    explicit CacheFileDescriptor(int fd) noexcept : fd_(fd) {}
-    ~CacheFileDescriptor() {
-        if (fd_ >= 0)
-            ::close(fd_);
+Result<std::filesystem::path> resolve_checked_cache_path(
+    const std::filesystem::path& directory, int directory_fd) {
+    std::error_code error;
+    auto resolved = std::filesystem::canonical(directory, error);
+    if (error) {
+        return std::unexpected(
+            filesystem_error(error_message::storage::inspect_cache_failed, error));
     }
-    CacheFileDescriptor(const CacheFileDescriptor&) = delete;
-    CacheFileDescriptor& operator=(const CacheFileDescriptor&) = delete;
-    int get() const noexcept {
-        return fd_;
-    }
-
-private:
-    int fd_;
-};
+    if (auto same = verify_cache_directory_identity(resolved, directory_fd); !same)
+        return std::unexpected(same.error());
+    // 保留合法的目录别名，只将已检查的目录路径交给 SQLite，数据库文件名原样拼接。
+    return resolved / cache_filename;
+}
 
 // 在 SQLite 打开文件前保护缓存；不跟随符号链接或更改其他文件。
-Status protect_cache_file(const std::filesystem::path& path, bool create) {
+Status protect_cache_file(int directory_fd, const std::string& name, bool create) {
     namespace errors = error_message::storage;
-    const int flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (create ? O_CREAT : 0);
-    int fd;
-    do {
-        fd = ::open(path.c_str(), flags, 0600);
-    } while (fd < 0 && errno == EINTR);
-    if (fd < 0) {
-        if (!create && errno == ENOENT)
+    const int flags = O_RDONLY | O_NONBLOCK | (create ? O_CREAT : 0);
+    auto file = secure_fs::open_at(directory_fd, name, flags, 0600);
+    if (!file) {
+        if (!create && file.error() == std::errc::no_such_file_or_directory)
             return {};
-        return std::unexpected(filesystem_error(
-            errors::protect_cache_failed, std::error_code{errno, std::generic_category()}));
+        return std::unexpected(filesystem_error(errors::protect_cache_failed, file.error()));
     }
-    CacheFileDescriptor file(fd);
 
-    struct stat info{};
-    if (::fstat(file.get(), &info) != 0) {
-        return std::unexpected(filesystem_error(
-            errors::protect_cache_failed, std::error_code{errno, std::generic_category()}));
-    }
-    if (!S_ISREG(info.st_mode) || info.st_uid != ::geteuid() || info.st_nlink != 1) {
+    const auto info = secure_fs::stat_fd(file->get());
+    if (!info)
+        return std::unexpected(filesystem_error(errors::protect_cache_failed, info.error()));
+    if (!S_ISREG(info->st_mode) || !secure_fs::owned_by_current_user(*info) ||
+        info->st_nlink != 1) {
         return std::unexpected(cache_permission_error(errors::unsafe_cache_file));
     }
-    if ((info.st_mode & 07777) != 0600 && ::fchmod(file.get(), 0600) != 0) {
+    if ((info->st_mode & 07777) != 0600 && ::fchmod(file->get(), 0600) != 0) {
         return std::unexpected(filesystem_error(
             errors::protect_cache_failed, std::error_code{errno, std::generic_category()}));
     }
     return {};
 }
 
-Status protect_cache_files(const std::filesystem::path& directory) {
-    auto main = protect_cache_file(directory / cache_filename, true);
+Status protect_cache_files(int directory_fd) {
+    auto main = protect_cache_file(directory_fd, cache_filename, true);
     if (!main)
         return main;
-    for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
+    for (const auto* suffix : cache_sidecar_suffixes) {
         auto protected_file =
-            protect_cache_file(directory / (std::string(cache_filename) + suffix), false);
+            protect_cache_file(directory_fd, std::string(cache_filename) + suffix, false);
         if (!protected_file)
             return protected_file;
     }
     return {};
+}
+
+Result<bool> inspect_cache_entry(int directory_fd, const char* name) {
+    struct stat info{};
+    if (::fstatat(directory_fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
+        const std::error_code error{errno, std::generic_category()};
+        if (error == std::errc::no_such_file_or_directory)
+            return false;
+        return std::unexpected(
+            filesystem_error(error_message::storage::inspect_cache_failed, error));
+    }
+    if (!S_ISREG(info.st_mode))
+        return std::unexpected(cache_permission_error(error_message::storage::unsafe_cache_file));
+    return true;
 }
 
 // 示例数据与真实缓存分开，查询示例不接触数据库。
@@ -157,18 +194,30 @@ Result<std::optional<SqliteStore>> open_read_cache(const Environment& env) {
     if (!directory)
         return std::unexpected(directory.error());
 
-    const auto path = *directory / cache_filename;
-    std::error_code error;
-    const auto status = std::filesystem::symlink_status(path, error);
-    if (error == std::errc::no_such_file_or_directory)
-        return std::optional<SqliteStore>{};
-    if (error)
+    namespace errors = error_message::storage;
+    const auto target = normalized_directory(*directory);
+    const auto directory_fd = secure_fs::open_directory(target, secure_fs::FollowLink::yes);
+    if (!directory_fd) {
+        if (directory_fd.error() == std::errc::no_such_file_or_directory)
+            return std::optional<SqliteStore>{};
         return std::unexpected(
-            filesystem_error(error_message::storage::inspect_cache_failed, error));
-    if (!std::filesystem::exists(status))
+            filesystem_error(errors::inspect_cache_failed, directory_fd.error()));
+    }
+    const auto database_exists = inspect_cache_entry(directory_fd->get(), cache_filename);
+    if (!database_exists)
+        return std::unexpected(database_exists.error());
+    if (!*database_exists)
         return std::optional<SqliteStore>{};
+    for (const auto* suffix : cache_sidecar_suffixes) {
+        const auto name = std::string(cache_filename) + suffix;
+        if (auto inspected = inspect_cache_entry(directory_fd->get(), name.c_str()); !inspected)
+            return std::unexpected(inspected.error());
+    }
 
-    auto store = SqliteStore::open(path, OpenMode::read_only);
+    auto path = resolve_checked_cache_path(target, directory_fd->get());
+    if (!path)
+        return std::unexpected(path.error());
+    auto store = SqliteStore::open(*path, OpenMode::read_only);
     if (!store)
         return std::unexpected(store.error());
     return std::optional<SqliteStore>{std::move(*store)};
@@ -214,20 +263,27 @@ Result<SyncSummary> sync_cache(
     if (!config)
         return std::unexpected(config.error());
 
-    auto directory = prepare_cache_directory(config->data_dir);
-    if (!directory)
-        return std::unexpected(directory.error());
+    const auto directory_fd = prepare_cache_directory(config->data_dir);
+    if (!directory_fd)
+        return std::unexpected(directory_fd.error());
+    const auto path =
+        resolve_checked_cache_path(normalized_directory(config->data_dir), directory_fd->get());
+    if (!path)
+        return std::unexpected(path.error());
 
     // 锁先于数据库取得，后于数据库释放，覆盖整个同步过程。
-    auto lock = DataDirLock::acquire(config->data_dir);
+    auto lock = DataDirLock::acquire(path->parent_path());
     if (!lock)
         return std::unexpected(lock.error());
 
-    auto protected_files = protect_cache_files(config->data_dir);
+    auto protected_files = protect_cache_files(directory_fd->get());
     if (!protected_files)
         return std::unexpected(protected_files.error());
 
-    auto store = SqliteStore::open(config->data_dir / cache_filename, OpenMode::read_write_create);
+    if (auto same = verify_cache_directory_identity(path->parent_path(), directory_fd->get());
+        !same)
+        return std::unexpected(same.error());
+    auto store = SqliteStore::open(*path, OpenMode::read_write_create);
     if (!store)
         return std::unexpected(store.error());
 

@@ -92,7 +92,7 @@ ErrorCode classify_transfer_error(CURLcode status) {
     }
 }
 
-// 仅重试临时网络或服务故障。每次调用都重新创建句柄和响应缓冲区。
+// 仅重试临时网络或服务故障。每次尝试都重置会话状态并重建句柄。
 template <class Operation>
 auto retry_imap(Operation operation) {
     constexpr std::array delays{std::chrono::seconds{1}, std::chrono::seconds{2}};
@@ -107,7 +107,60 @@ auto retry_imap(Operation operation) {
     return result;
 }
 
-Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& config, std::string_view mailbox_path) {
+bool valid_text(std::string_view value) {
+    return !value.empty() && value.find('\0') == std::string_view::npos;
+}
+
+Result<std::string> build_imap_url(
+    const ImapSettings& imap, const AccountId& account_id, std::string_view mailbox_path) {
+    auto fail = [&](std::string message) {
+        return std::unexpected(Error{
+            .code = ErrorCode::config_error,
+            .message = std::move(message),
+            .account_id = account_id,
+            .mail_id = std::nullopt,
+            .stage = errors::connect_stage
+        });
+    };
+
+    if (!mailbox_path.starts_with('/') || !valid_text(mailbox_path)) {
+        return fail(errors::invalid_mailbox_path);
+    }
+
+    const char* scheme = imap.tls_mode == TlsMode::implicit ? "imaps" : "imap";
+    const std::string port = std::to_string(imap.port);
+    const std::string path{mailbox_path};
+
+    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> url{curl_url(), &curl_url_cleanup};
+    if (!url) {
+        return fail(errors::url_creation_failed);
+    }
+
+    CURLUcode url_code = CURLUE_OK;
+    auto set_url_part = [&](CURLUPart part, const char* value) {
+        url_code = curl_url_set(url.get(), part, value, 0);
+        return url_code == CURLUE_OK;
+    };
+
+    if (!set_url_part(CURLUPART_SCHEME, scheme) ||
+        !set_url_part(CURLUPART_HOST, imap.host.c_str()) ||
+        !set_url_part(CURLUPART_PORT, port.c_str()) ||
+        !set_url_part(CURLUPART_PATH, path.c_str())) {
+        return fail(std::string(errors::invalid_server_url) + ": " + curl_url_strerror(url_code));
+    }
+
+    char* raw_url = nullptr;
+    url_code = curl_url_get(url.get(), CURLUPART_URL, &raw_url, 0);
+
+    std::unique_ptr<char, decltype(&curl_free)> server_url{raw_url, &curl_free};
+    if (url_code != CURLUE_OK || !server_url) {
+        return fail(errors::url_read_failed);
+    }
+    return std::string{server_url.get()};
+}
+
+Result<imap_detail::CurlHandle> make_imap_handle_impl(
+    const RuntimeConfig& config, std::string_view mailbox_path) {
     const auto& imap = config.imap;
 
     auto fail = [&](std::string message) {
@@ -118,10 +171,6 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
             .mail_id = std::nullopt,
             .stage = errors::connect_stage
         });
-    };
-
-    auto valid_text = [](std::string_view value) {
-        return !value.empty() && value.find('\0') == std::string_view::npos;
     };
 
     // 1. 检查配置并读取密码
@@ -182,38 +231,12 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
     };
 
     // 3. 构造服务器 URL
-    const char* scheme = imap.tls_mode == TlsMode::implicit ? "imaps" : "imap";
-    const std::string port = std::to_string(imap.port);
-    const std::string path{mailbox_path};
-
-    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> url{curl_url(), &curl_url_cleanup};
-    if (!url) {
-        return fail(errors::url_creation_failed);
+    auto server_url = build_imap_url(imap, config.account.id, mailbox_path);
+    if (!server_url) {
+        return std::unexpected(server_url.error());
     }
 
-    CURLUcode url_code = CURLUE_OK;
-
-    auto set_url_part = [&](CURLUPart part, const char* value) {
-        url_code = curl_url_set(url.get(), part, value, 0);
-        return url_code == CURLUE_OK;
-    };
-
-    if (!set_url_part(CURLUPART_SCHEME, scheme) ||
-        !set_url_part(CURLUPART_HOST, imap.host.c_str()) ||
-        !set_url_part(CURLUPART_PORT, port.c_str()) ||
-        !set_url_part(CURLUPART_PATH, path.c_str())) {
-        return fail(std::string(errors::invalid_server_url) + ": " + curl_url_strerror(url_code));
-    }
-
-    char* raw_url = nullptr;
-    url_code = curl_url_get(url.get(), CURLUPART_URL, &raw_url, 0);
-
-    std::unique_ptr<char, decltype(&curl_free)> server_url{raw_url, &curl_free};
-    if (url_code != CURLUE_OK || !server_url) {
-        return fail(errors::url_read_failed);
-    }
-
-    if (!set_option(CURLOPT_URL, server_url.get())) {
+    if (!set_option(CURLOPT_URL, server_url->c_str())) {
         return option_failure(errors::url_set_failed);
     }
 
@@ -227,6 +250,7 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
     }
 
     // 5. 设置超时，协议及日志选项
+    const char* scheme = imap.tls_mode == TlsMode::implicit ? "imaps" : "imap";
     if (!set_option(CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(connect_ms)) ||
         !set_option(CURLOPT_TIMEOUT_MS, static_cast<long>(total_ms)) ||
         !set_option(CURLOPT_PROTOCOLS_STR, scheme) || !set_option(CURLOPT_NOSIGNAL, 1L) ||
@@ -238,7 +262,7 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
     return handle;
 }
 
-// 收件箱快照：回调和单次请求。
+// 收件箱快照与单封下载的回调函数。
 std::size_t append_response(char* data, std::size_t size, std::size_t count, void* userdata) {
     const auto bytes = callback_size(size, count);
     if (!bytes) {
@@ -262,49 +286,6 @@ std::size_t discard_response(char*, std::size_t size, std::size_t count, void*) 
     return callback_size(size, count).value_or(CURL_WRITEFUNC_ERROR);
 }
 
-Result<MailboxSnapshot> read_mailbox_snapshot_once(const RuntimeConfig& config) {
-    auto fail = [&](ErrorCode code, const char* message, CURLcode status) {
-        return std::unexpected(Error{
-            .code = code,
-            .message = std::string(message) + ": " + curl_easy_strerror(status),
-            .account_id = config.account.id,
-            .mail_id = std::nullopt,
-            .stage = errors::snapshot_stage
-        });
-    };
-
-    // 1. 让响应缓冲区的生命周期覆盖句柄和回调。
-    std::string response;
-
-    // 2. 创建 INBOX 连接句柄。
-    auto handle = imap_detail::make_imap_handle(config, "/INBOX");
-    if (!handle) {
-        return std::unexpected(handle.error());
-    }
-
-    // 3. 设置查询命令和响应回调。
-    CurlOptionSetter set_option{handle->get()};
-    if (!set_option(CURLOPT_CUSTOMREQUEST, "UID SEARCH ALL") ||
-        !set_option(CURLOPT_HEADERFUNCTION, &append_response) ||
-        !set_option(CURLOPT_HEADERDATA, &response) ||
-        !set_option(CURLOPT_WRITEFUNCTION, &discard_response)) {
-        return fail(ErrorCode::config_error, errors::snapshot_options_failed, set_option.code);
-    }
-
-    // 4. 查询 INBOX 并检查传输结果。
-    const CURLcode status = curl_easy_perform(handle->get());
-    if (status != CURLE_OK) {
-        if (imap_detail::has_service_unavailable(response)) {
-            return fail(ErrorCode::network_error, errors::service_unavailable, status);
-        }
-        return fail(classify_transfer_error(status), errors::snapshot_request_failed, status);
-    }
-
-    // 5. 解析 UIDVALIDITY 和 UID 列表。
-    return imap_detail::parse_mailbox_snapshot(response, config.account.id);
-}
-
-// 单封邮件下载：回调和单次请求。
 std::size_t fetch_header_callback(char* data, std::size_t size, std::size_t count, void* userdata) {
     const auto bytes = callback_size(size, count);
     if (!bytes || !userdata || (!data && *bytes != 0))
@@ -337,64 +318,241 @@ std::size_t fetch_body_callback(char* data, std::size_t size, std::size_t count,
     return CURL_WRITEFUNC_ERROR;
 }
 
-Result<FetchedMail> fetch_mail_once(const RuntimeConfig& config, const RemoteKey& key) {
+// 每次请求结束后清除指向栈上局部对象的回调指针，避免后续清理句柄发 LOGOUT 时悬空访问。
+struct CallbackReset {
+    CURL* handle;
+
+    ~CallbackReset() {
+        if (handle) {
+            curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, &discard_response);
+            curl_easy_setopt(handle, CURLOPT_HEADERDATA, nullptr);
+            curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &discard_response);
+            curl_easy_setopt(handle, CURLOPT_WRITEDATA, nullptr);
+            curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, nullptr);
+        }
+    }
+};
+
+}  // namespace
+
+struct ImapSession::State {
+    RuntimeConfig config;
+    imap_detail::CurlHandle handle{nullptr, &curl_easy_cleanup};
+    std::uint32_t selected_uid_validity{0};
+
+    void reset() noexcept {
+        handle.reset();
+        selected_uid_validity = 0;
+    }
+
+    Result<CURL*> ensure_handle(std::string_view mailbox_path) {
+        if (!handle) {
+            auto created = make_imap_handle_impl(config, mailbox_path);
+            if (!created)
+                return std::unexpected(created.error());
+            handle = std::move(*created);
+            selected_uid_validity = 0;
+            return handle.get();
+        }
+
+        auto url = build_imap_url(config.imap, config.account.id, mailbox_path);
+        if (!url) {
+            reset();
+            return std::unexpected(url.error());
+        }
+        CurlOptionSetter set_option{handle.get()};
+        if (!set_option(CURLOPT_URL, url->c_str())) {
+            reset();
+            return std::unexpected(Error{
+                .code = ErrorCode::config_error,
+                .message = std::string(errors::url_set_failed) + ": " +
+                           curl_easy_strerror(set_option.code),
+                .account_id = config.account.id,
+                .mail_id = std::nullopt,
+                .stage = errors::connect_stage
+            });
+        }
+        return handle.get();
+    }
+};
+
+ImapSession::ImapSession(RuntimeConfig config)
+    : state_(std::make_unique<State>(State{std::move(config)})) {}
+
+ImapSession::~ImapSession() = default;
+ImapSession::ImapSession(ImapSession&& other) noexcept = default;
+ImapSession& ImapSession::operator=(ImapSession&& other) noexcept = default;
+
+Result<MailboxSnapshot> ImapSession::read_mailbox_snapshot() {
+    if (!state_) {
+        return std::unexpected(Error{
+            .code = ErrorCode::invalid_argument,
+            .message = errors::invalid_settings,
+            .account_id = std::nullopt,
+            .mail_id = std::nullopt,
+            .stage = errors::snapshot_stage
+        });
+    }
+
+    auto read_once = [&]() -> Result<MailboxSnapshot> {
+        auto fail = [&](ErrorCode code, const char* message, CURLcode status) {
+            return std::unexpected(Error{
+                .code = code,
+                .message = std::string(message) + ": " + curl_easy_strerror(status),
+                .account_id = state_->config.account.id,
+                .mail_id = std::nullopt,
+                .stage = errors::snapshot_stage
+            });
+        };
+
+        // 每次快照都从干净的句柄开始，确保拿到最新的 SELECT [UIDVALIDITY] 响应。
+        state_->reset();
+        std::string response;
+        auto handle = state_->ensure_handle("/INBOX");
+        if (!handle) {
+            return std::unexpected(handle.error());
+        }
+
+        CurlOptionSetter set_option{*handle};
+        CURLcode status = CURLE_OK;
+        {
+            CallbackReset guard{*handle};
+            if (set_option(CURLOPT_CUSTOMREQUEST, "UID SEARCH ALL") &&
+                set_option(CURLOPT_HEADERFUNCTION, &append_response) &&
+                set_option(CURLOPT_HEADERDATA, &response) &&
+                set_option(CURLOPT_WRITEFUNCTION, &discard_response)) {
+                status = curl_easy_perform(*handle);
+            }
+        }
+        if (set_option.code != CURLE_OK) {
+            state_->reset();
+            return fail(ErrorCode::config_error, errors::snapshot_options_failed, set_option.code);
+        }
+
+        if (status != CURLE_OK) {
+            state_->reset();
+            if (imap_detail::has_service_unavailable(response)) {
+                return fail(ErrorCode::network_error, errors::service_unavailable, status);
+            }
+            return fail(classify_transfer_error(status), errors::snapshot_request_failed, status);
+        }
+
+        auto snapshot = imap_detail::parse_mailbox_snapshot(response, state_->config.account.id);
+        if (!snapshot) {
+            state_->reset();
+            return snapshot;
+        }
+        state_->selected_uid_validity = snapshot->uid_validity;
+        return snapshot;
+    };
+
+    return retry_imap(read_once);
+}
+
+Result<FetchedMail> ImapSession::fetch_mail(const RemoteKey& key) {
+    if (!state_) {
+        return std::unexpected(Error{
+            .code = ErrorCode::invalid_argument,
+            .message = errors::invalid_remote_key,
+            .account_id = key.account_id,
+            .mail_id = std::nullopt,
+            .stage = errors::fetch_stage
+        });
+    }
+
     auto make_error = [&](ErrorCode code, std::string message) {
         return Error{
             .code = code,
             .message = std::move(message),
-            .account_id = config.account.id,
+            .account_id = state_->config.account.id,
             .mail_id = std::nullopt,
             .stage = errors::fetch_stage
         };
     };
 
-    // 1. 检查远端邮件标识，并指定邮箱的 UIDVALIDITY。
-    if (key.account_id.empty() || key.account_id != config.account.id || key.folder != "INBOX" ||
-        key.uid_validity == 0 || key.uid == 0) {
+    // 1. 检查远端邮件标识。
+    if (key.account_id.empty() || key.account_id != state_->config.account.id ||
+        key.folder != "INBOX" || key.uid_validity == 0 || key.uid == 0) {
         return std::unexpected(make_error(ErrorCode::invalid_argument, errors::invalid_remote_key));
     }
+
     const auto path = "/INBOX;UIDVALIDITY=" + std::to_string(key.uid_validity);
-    imap_detail::FetchTransfer transfer(key);
-    auto handle = imap_detail::make_imap_handle(config, path);
-    if (!handle) {
-        return std::unexpected(handle.error());
-    }
-
-    // 2. 使用 BODY.PEEK[] 请求完整邮件，保持服务器已读状态不变。
     const auto command = "UID FETCH " + std::to_string(key.uid) + " (INTERNALDATE BODY.PEEK[])";
-    CurlOptionSetter set_option{handle->get()};
-    if (!set_option(CURLOPT_CUSTOMREQUEST, command.c_str()) ||
-        !set_option(CURLOPT_HEADERFUNCTION, &fetch_header_callback) ||
-        !set_option(CURLOPT_HEADERDATA, &transfer) ||
-        !set_option(CURLOPT_WRITEFUNCTION, &fetch_body_callback) ||
-        !set_option(CURLOPT_WRITEDATA, &transfer)) {
-        return std::unexpected(make_error(ErrorCode::config_error,
-            std::string(errors::fetch_options_failed) + ": " +
-                curl_easy_strerror(set_option.code)));
-    }
 
-    // 3. 执行一次下载，将传输结果及已收集的数据交给协议解析组件。
-    const auto status = curl_easy_perform(handle->get());
-    if (status != CURLE_OK) {
-        return transfer.finish(make_error(classify_transfer_error(status),
-            std::string(errors::fetch_request_failed) + ": " + curl_easy_strerror(status)));
-    }
-    return transfer.finish();
+    auto fetch_once = [&]() -> Result<FetchedMail> {
+        if (state_->selected_uid_validity != 0 &&
+            state_->selected_uid_validity != key.uid_validity) {
+            state_->reset();
+        }
+        const bool had_selected =
+            state_->handle != nullptr && state_->selected_uid_validity == key.uid_validity;
+        const std::uint32_t inherited_validity = had_selected ? state_->selected_uid_validity : 0;
+
+        auto handle = state_->ensure_handle(path);
+        if (!handle) {
+            return std::unexpected(handle.error());
+        }
+
+        imap_detail::FetchTransfer transfer(key, inherited_validity);
+        CurlOptionSetter set_option{*handle};
+        CURLcode status = CURLE_OK;
+        {
+            CallbackReset guard{*handle};
+            if (set_option(CURLOPT_CUSTOMREQUEST, command.c_str()) &&
+                set_option(CURLOPT_HEADERFUNCTION, &fetch_header_callback) &&
+                set_option(CURLOPT_HEADERDATA, &transfer) &&
+                set_option(CURLOPT_WRITEFUNCTION, &fetch_body_callback) &&
+                set_option(CURLOPT_WRITEDATA, &transfer)) {
+                status = curl_easy_perform(*handle);
+            }
+        }
+        if (set_option.code != CURLE_OK) {
+            state_->reset();
+            return std::unexpected(make_error(ErrorCode::config_error,
+                std::string(errors::fetch_options_failed) + ": " +
+                    curl_easy_strerror(set_option.code)));
+        }
+
+        long new_connects = 0;
+        // 即使复用同一个 easy handle，libcurl 也可能在请求开始时重新建连。
+        const bool require_observed_validity =
+            !had_selected ||
+            curl_easy_getinfo(*handle, CURLINFO_NUM_CONNECTS, &new_connects) != CURLE_OK ||
+            new_connects > 0;
+
+        if (status != CURLE_OK) {
+            state_->reset();
+            return transfer.finish(
+                make_error(classify_transfer_error(status),
+                    std::string(errors::fetch_request_failed) + ": " + curl_easy_strerror(status)),
+                require_observed_validity);
+        }
+
+        auto result = transfer.finish(std::nullopt, require_observed_validity);
+        if (result || (result.error().code == ErrorCode::remote_gone &&
+                          result.error().message == errors::remote_mail_gone)) {
+            state_->selected_uid_validity = key.uid_validity;
+        } else {
+            state_->reset();
+        }
+        return result;
+    };
+
+    return retry_imap(fetch_once);
 }
 
-}  // namespace
-
-Result<imap_detail::CurlHandle> imap_detail::make_imap_handle(const RuntimeConfig& config, std::string_view mailbox_path) {
+Result<imap_detail::CurlHandle> imap_detail::make_imap_handle(
+    const RuntimeConfig& config, std::string_view mailbox_path) {
     return make_imap_handle_impl(config, mailbox_path);
 }
 
-// 对外接口负责有限重试。
+// 对外独立接口内部使用临时会话完成有限重试。
 Result<MailboxSnapshot> read_mailbox_snapshot(const RuntimeConfig& config) {
-    return retry_imap([&] { return read_mailbox_snapshot_once(config); });
+    return ImapSession{config}.read_mailbox_snapshot();
 }
 
 Result<FetchedMail> fetch_mail(const RuntimeConfig& config, const RemoteKey& key) {
-    return retry_imap([&] { return fetch_mail_once(config, key); });
+    return ImapSession{config}.fetch_mail(key);
 }
 
 }  // namespace mailai

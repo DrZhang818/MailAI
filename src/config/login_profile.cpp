@@ -9,11 +9,14 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <random>
 #include <string_view>
 #include <system_error>
 #include <utility>
 
 #include "mailai/error_message.h"
+#include "util/secure_fs.h"
 
 namespace mailai {
 
@@ -50,34 +53,17 @@ bool valid_value(std::string_view value) {
     return value.find_first_of(invalid_bytes) == std::string_view::npos;
 }
 
-class FileDescriptor {
-public:
-    explicit FileDescriptor(int fd = -1) : fd_(fd) {}
-    ~FileDescriptor() {
-        close();
-    }
-    FileDescriptor(FileDescriptor&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
-    FileDescriptor(const FileDescriptor&) = delete;
-    FileDescriptor& operator=(const FileDescriptor&) = delete;
-
-    int get() const {
-        return fd_;
-    }
-    int close() noexcept {
-        return fd_ < 0 ? 0 : ::close(std::exchange(fd_, -1));
-    }
-
-private:
-    int fd_;
-};
+using secure_fs::UniqueFd;
+using FileDescriptor = UniqueFd;
 
 bool secure_directory(const struct stat& info) {
-    return S_ISDIR(info.st_mode) && info.st_uid == ::geteuid() && (info.st_mode & 07777) == 0700;
+    return S_ISDIR(info.st_mode) && secure_fs::owned_by_current_user(info) &&
+           (info.st_mode & 07777) == 0700;
 }
 
 bool secure_file(const struct stat& info) {
-    return S_ISREG(info.st_mode) && info.st_uid == ::geteuid() && (info.st_mode & 07777) == 0600 &&
-           info.st_nlink == 1;
+    return S_ISREG(info.st_mode) && secure_fs::owned_by_current_user(info) &&
+           (info.st_mode & 07777) == 0600 && info.st_nlink == 1;
 }
 
 // 缺少目录时，读取不创建目录，而是返回空文件描述符。
@@ -94,18 +80,18 @@ Result<FileDescriptor> open_profile_directory(const Environment& env, bool creat
         }
     }
 
-    FileDescriptor fd(::open(directory->c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (fd.get() < 0) {
-        if (!create && errno == ENOENT)
+    auto fd = secure_fs::open_directory(*directory, secure_fs::FollowLink::no);
+    if (!fd) {
+        if (!create && fd.error() == std::errc::no_such_file_or_directory)
             return FileDescriptor{};
         return std::unexpected(profile_error(message::directory_unsafe));
     }
 
-    struct stat info{};
-    if (::fstat(fd.get(), &info) != 0 || !secure_directory(info)) {
+    const auto info = secure_fs::stat_fd(fd->get());
+    if (!info || !secure_directory(*info)) {
         return std::unexpected(profile_error(message::directory_unsafe));
     }
-    return fd;
+    return std::move(*fd);
 }
 
 // 所有文件操作通过已经检查过的目录描述符完成，避免再次跟随目录路径。
@@ -121,20 +107,21 @@ Result<bool> profile_exists(int directory_fd) {
 }
 
 Result<std::string> read_profile(int directory_fd) {
-    FileDescriptor fd(
-        ::openat(directory_fd, kProfileFilename, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
-    struct stat info{};
-    if (fd.get() < 0 || ::fstat(fd.get(), &info) != 0 || !secure_file(info)) {
+    auto fd = secure_fs::open_at(directory_fd, kProfileFilename, O_RDONLY | O_NONBLOCK);
+    if (!fd)
+        return std::unexpected(profile_error(message::file_unsafe));
+    const auto info = secure_fs::stat_fd(fd->get());
+    if (!info || !secure_file(*info)) {
         return std::unexpected(profile_error(message::file_unsafe));
     }
-    if (info.st_size > static_cast<off_t>(kMaxProfileBytes)) {
+    if (info->st_size > static_cast<off_t>(kMaxProfileBytes)) {
         return std::unexpected(profile_error(message::profile_too_large));
     }
 
     std::string contents;
     std::array<char, 4096> buffer;
     while (true) {
-        const auto count = ::read(fd.get(), buffer.data(), buffer.size());
+        const auto count = ::read(fd->get(), buffer.data(), buffer.size());
         if (count == 0)
             return contents;
         if (count < 0) {
@@ -242,47 +229,60 @@ bool write_all(int fd, std::string_view contents) {
 
 class TemporaryProfile {
 public:
-    TemporaryProfile(int directory_fd, const std::string& name)
+    TemporaryProfile(int directory_fd, const std::string& name) noexcept
         : directory_fd_(directory_fd), name_(name) {}
     ~TemporaryProfile() {
-        if (!name_.empty())
+        if (active_)
             ::unlinkat(directory_fd_, name_.c_str(), 0);
     }
     TemporaryProfile(const TemporaryProfile&) = delete;
     TemporaryProfile& operator=(const TemporaryProfile&) = delete;
 
-    void release() {
-        name_.clear();
+    void release() noexcept {
+        active_ = false;
     }
 
 private:
     int directory_fd_;
-    std::string name_;
+    const std::string& name_;
+    bool active_{true};
 };
+
+std::string temporary_name() {
+    static thread_local std::mt19937_64 generator{std::random_device{}()};
+    return ".login.conf.tmp." + std::to_string(generator()) + "." + std::to_string(generator());
+}
 
 Status write_profile(int directory_fd, const std::string& contents) {
     for (int attempt = 0; attempt < 16; ++attempt) {
-        const auto name = ".login.conf.tmp." + std::to_string(::arc4random()) + "." +
-                          std::to_string(::arc4random());
-        FileDescriptor fd(::openat(directory_fd,
-            name.c_str(),
-            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-            0600));
-        if (fd.get() < 0) {
-            if (errno == EEXIST)
+        std::string name;
+        try {
+            name = temporary_name();
+        } catch (const std::exception&) {
+            return std::unexpected(profile_error(message::write_failed));
+        }
+        auto fd = secure_fs::open_at(directory_fd, name, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (!fd) {
+            if (fd.error() == std::errc::file_exists)
                 continue;
             break;
         }
 
         TemporaryProfile temporary(directory_fd, name);
-        if (::fchmod(fd.get(), 0600) != 0 || !write_all(fd.get(), contents) ||
-            ::fsync(fd.get()) != 0 || fd.close() != 0) {
+        if (::fchmod(fd->get(), 0600) != 0 || !write_all(fd->get(), contents) ||
+            ::fsync(fd->get()) != 0 || fd->close() != 0) {
             break;
         }
         // 临时文件完整写入后再替换，失败时旧配置保持不变。
         if (::renameat(directory_fd, name.c_str(), directory_fd, kProfileFilename) != 0)
             break;
         temporary.release();
+        // 新配置已经生效，目录落盘失败只报告脱敏诊断，避免调用方回滚其对应的凭据。
+        if (const auto error = secure_fs::sync_directory(directory_fd)) {
+            std::fprintf(stderr,
+                "Warning: fsync(login profile directory) failed (errno %d)\n",
+                error.value());
+        }
         return {};
     }
     return std::unexpected(profile_error(message::write_failed));

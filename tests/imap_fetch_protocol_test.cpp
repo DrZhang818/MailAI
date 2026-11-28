@@ -2,6 +2,7 @@
 #include <exception>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "mail/imap_protocol.h"
@@ -192,6 +193,57 @@ void test_error_precedence() {
         "Ordinary diagnostic text is not a response code");
 }
 
+void test_reused_selection() {
+    FetchTransfer reused(key, key.uid_validity);
+    expect(reused.append_header("* 2 EXISTS\r\n"), "Accept an unsolicited EXISTS update");
+    feed(reused, prefix, raw, suffix);
+    expect_mail(reused.finish(std::nullopt, false));
+    expect_error(reused.finish(std::nullopt, true), ErrorCode::protocol_error);
+
+    FetchTransfer reselected_without_validity(key, key.uid_validity);
+    expect(!reselected_without_validity.append_header("A003 OK [READ-WRITE] SELECT completed\r\n"),
+        "Re-SELECT without UIDVALIDITY must fail");
+    expect_error(reselected_without_validity.finish(), ErrorCode::protocol_error);
+
+    FetchTransfer stale_on_reselect(key, key.uid_validity);
+    expect(!stale_on_reselect.append_header("* OK [UIDVALIDITY 78] valid\r\n"),
+        "Changed UIDVALIDITY on reused session must fail");
+    expect_error(stale_on_reselect.finish(), ErrorCode::remote_gone);
+}
+
+void test_validity_after_literal() {
+    constexpr std::string_view changed = "* OK [UIDVALIDITY 78] New identity\r\n";
+    for (const auto completion :
+        {complete, std::string_view{"A004 OK [UIDVALIDITY 78] Done\r\n"}}) {
+        FetchTransfer transfer(key);
+        select_inbox(transfer);
+        expect(transfer.append_header(prefix) && transfer.append_body(prefix) &&
+                   transfer.append_body(raw) && transfer.append_header(suffix),
+            "Complete literal before the UIDVALIDITY update");
+        if (completion == complete) {
+            expect(transfer.append_header(changed), "Buffer the untagged OK response");
+        }
+        expect(transfer.append_header(completion), "Buffer the tagged OK response");
+        const auto result = transfer.finish();
+        expect_error(result, ErrorCode::remote_gone);
+        expect(result.error().message == mailai::error_message::imap::uid_validity_changed,
+            "Changed UIDVALIDITY should override a successful FETCH");
+    }
+
+    const auto literal_prefix = std::string{prefix.substr(0, prefix.find('{') + 1)} +
+                                std::to_string(changed.size()) + "}\r\n";
+    FetchTransfer resembles_protocol(key, key.uid_validity);
+    expect(resembles_protocol.append_header(literal_prefix) &&
+               resembles_protocol.append_body(literal_prefix) &&
+               resembles_protocol.append_header(changed) &&
+               resembles_protocol.append_header(suffix) &&
+               resembles_protocol.append_header("A004 OK [UIDVALIDITY 77] Done\r\n"),
+        "Buffer literal overflow before inspecting the protocol tail");
+    const auto result = resembles_protocol.finish(std::nullopt, true);
+    expect(result && result->raw == changed && result->key.uid_validity == key.uid_validity,
+        "Only the protocol UIDVALIDITY should count, preserving the lookalike as message bytes");
+}
+
 }  // namespace
 
 int main() {
@@ -199,6 +251,8 @@ int main() {
         test_literal_layouts();
         test_invalid_responses();
         test_error_precedence();
+        test_reused_selection();
+        test_validity_after_literal();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

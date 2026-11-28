@@ -21,12 +21,14 @@ if __name__ == "__main__":
             assert fixture.server.fetch_requests == 1
             fetch(executable, fixture, mode, "missing-uid")
             assert fixture.server.fetch_requests == 2
+            run_client(executable, fixture, mode, "session-reuse", TEST_PASSWORD, expected_connections=1)
+            assert fixture.server.fetch_requests == 5 and not fixture.server.seen
             for scenario in ("invalid-account", "invalid-folder", "invalid-uid", "invalid-validity"):
                 fetch(executable, fixture, mode, scenario, expected_connections=0)
             fetch(executable, fixture, mode, "wrong-password", "wrong-test-password", 1)
             fetch(executable, fixture, mode, "missing-password", None, 0)
             fetch(executable, fixture, mode, "untrusted", expected_connections=1)
-            assert fixture.server.fetch_requests == 2
+            assert fixture.server.fetch_requests == 5
         with ImapFixture(implicit_tls=mode == "implicit", certificate_san="DNS:localhost") as fixture:
             fetch(executable, fixture, mode, "wrong-hostname", expected_connections=1)
             assert fixture.server.fetch_requests == 0

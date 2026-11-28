@@ -1,5 +1,6 @@
 #include "mailai/login_profile.h"
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -8,9 +9,13 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
+#include "../src/util/secure_fs.h"
+#include "mailai/services.h"
+#include "mailai/store.h"
 #include "test_support.h"
 
 namespace {
@@ -300,6 +305,57 @@ void test_insecure_file_or_directory_is_not_used() {
     expect(fs::is_empty(redirect_dir), "rejecting the directory must leave its target untouched");
 }
 
+void test_open_at_only_accepts_a_single_filename() {
+    TempDirectory directory;
+    const auto fd = secure_fs::open_directory(directory.path(), secure_fs::FollowLink::no);
+    expect(fd.has_value(), "open the fixture directory");
+    for (const auto invalid :
+        {std::string_view{},
+            std::string_view{"."},
+            std::string_view{".."},
+            std::string_view{"a/b"},
+            std::string_view{"file\0suffix", 11}}) {
+        const auto file = secure_fs::open_at(fd->get(), invalid, O_RDONLY | O_CREAT, 0600);
+        expect(!file && file.error() == std::errc::invalid_argument,
+            "reject malformed names before calling openat");
+    }
+    expect(fs::is_empty(directory.path()), "invalid file names must leave the directory empty");
+    expect(secure_fs::open_at(fd->get(), "file", O_RDONLY | O_CREAT, 0600).has_value(),
+        "a valid direct child can be created");
+    expect(!secure_fs::sync_directory(fd->get()), "the created directory entry can be synced");
+}
+
+void test_cache_rejects_database_symlinks() {
+    TempDirectory directory;
+    const auto root = fs::canonical(directory.path());
+    const auto cache = root / "cache";
+    fs::create_directory(cache);
+    const auto database = cache / "cache.sqlite3";
+    expect(SqliteStore::open(database, OpenMode::read_write_create).has_value(),
+        "create a valid fixture database");
+
+    const auto alias = root / "cache-alias";
+    fs::create_directory_symlink(cache, alias);
+    const auto services = make_runtime_services({{"MAILAI_DATA_DIR", alias.string()}});
+    expect(services.list(DataSource::cache, {}).has_value(),
+        "a directory alias should still resolve to the verified cache");
+
+    const auto moved = root / "other.sqlite3";
+    fs::rename(database, moved);
+    fs::create_symlink(moved, database);
+    expect(!services.list(DataSource::cache, {}), "read-only cache lookup should reject symlinks");
+    expect(!SqliteStore::open(database, OpenMode::read_only) &&
+               !SqliteStore::open(database, OpenMode::read_write_create),
+        "SQLite should reject a symbolic link in both open modes");
+
+    fs::remove(database);
+    fs::rename(moved, database);
+    const auto wal = cache / "cache.sqlite3-wal";
+    fs::remove(wal);
+    fs::create_symlink(database, wal);
+    expect(!services.list(DataSource::cache, {}), "read-only lookup should reject WAL symlinks");
+}
+
 }  // namespace
 
 int main() {
@@ -312,4 +368,6 @@ int main() {
     test_malformed_profile_is_rejected();
     test_oversized_profile_is_rejected();
     test_insecure_file_or_directory_is_not_used();
+    test_open_at_only_accepts_a_single_filename();
+    test_cache_rejects_database_symlinks();
 }

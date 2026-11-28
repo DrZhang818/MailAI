@@ -26,7 +26,8 @@ void print_failure(const Error& error) {
 }
 
 int probe(const RuntimeConfig& config) {
-    auto snapshot = read_mailbox_snapshot(config);
+    ImapSession session{config};
+    auto snapshot = session.read_mailbox_snapshot();
     if (!snapshot) {
         print_failure(snapshot.error());
         return 1;
@@ -39,7 +40,7 @@ int probe(const RuntimeConfig& config) {
     // 快照已按 UID 排序并去重，只试收最近五封，不打开数据库。
     for (auto it = snapshot->uids.end() - count; it != snapshot->uids.end(); ++it) {
         const RemoteKey key{config.account.id, "INBOX", snapshot->uid_validity, *it};
-        auto mail = fetch_mail(config, key);
+        auto mail = session.fetch_mail(key);
         if (!mail) {
             print_failure(mail.error());
             continue;

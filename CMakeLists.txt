@@ -22,6 +22,19 @@ find_package(LibXml2 2.9 REQUIRED)
 
 find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
 
+# 所有项目目标共用的语言标准和告警选项。
+add_library(mailai_build_options INTERFACE)
+target_compile_options(mailai_build_options INTERFACE -Wall -Wextra -Wpedantic)
+
+function(mailai_configure_target target)
+    set_target_properties(${target} PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_link_libraries(${target} PRIVATE mailai_build_options)
+endfunction()
+
 # 核心库及其公开依赖。
 add_library(mailai_core STATIC
     src/app/inbox.cpp
@@ -31,6 +44,7 @@ add_library(mailai_core STATIC
     src/config/config.cpp
     src/config/credential_store.cpp
     src/config/login_profile.cpp
+    src/mail/html_extract.cpp
     src/mail/imap.cpp
     src/mail/imap_protocol.cpp
     src/mail/mime.cpp
@@ -41,6 +55,7 @@ add_library(mailai_core STATIC
     src/store/sqlite_utils.cpp
     src/store/sqlite_rows.cpp
     src/store/schema.cpp
+    src/util/secure_fs.cpp
 )
 
 target_link_libraries(mailai_core PRIVATE
@@ -60,11 +75,13 @@ if(APPLE)
     )
 endif()
 
-target_include_directories(mailai_core PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+target_include_directories(mailai_core
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 target_compile_features(mailai_core PUBLIC cxx_std_23)
+mailai_configure_target(mailai_core)
 
 # 可执行程序与 CLI 测试共用同一组命令行实现。
 set(MAILAI_CLI_SOURCES
@@ -78,249 +95,119 @@ add_executable(mail_assistant
     src/main.cpp
     ${MAILAI_CLI_SOURCES}
 )
+target_link_libraries(mail_assistant PRIVATE mailai_core)
+target_include_directories(mail_assistant PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+mailai_configure_target(mail_assistant)
 
-add_executable(inbox_test
-    tests/inbox_test.cpp
-)
+# 测试可执行程序：链接核心库，INTERNAL 表示需要访问 src 下的内部头文件。
+function(mailai_add_test_executable target)
+    cmake_parse_arguments(ARG "INTERNAL;EXCLUDE_FROM_ALL" "" "SOURCES;LIBRARIES" ${ARGN})
+    if(ARG_EXCLUDE_FROM_ALL)
+        add_executable(${target} EXCLUDE_FROM_ALL ${ARG_SOURCES})
+    else()
+        add_executable(${target} ${ARG_SOURCES})
+    endif()
+    target_link_libraries(${target} PRIVATE mailai_core ${ARG_LIBRARIES})
+    if(ARG_INTERNAL)
+        target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    endif()
+    mailai_configure_target(${target})
+endfunction()
 
-add_executable(cli_test
-    tests/cli_test.cpp
-    ${MAILAI_CLI_SOURCES}
-)
-
-add_executable(config_test
-    tests/config_test.cpp
-)
-
-add_executable(login_profile_test tests/login_profile_test.cpp)
-add_executable(login_service_test tests/login_service_test.cpp)
-target_include_directories(login_service_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(login_service_test PRIVATE SQLite3::SQLite3)
-
-if(APPLE)
-    add_executable(credential_store_test tests/credential_store_test.cpp)
-    target_include_directories(credential_store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(credential_store_test PRIVATE mailai_core
-        ${MAILAI_SECURITY_FRAMEWORK} ${MAILAI_COREFOUNDATION_FRAMEWORK})
-    set_target_properties(credential_store_test PROPERTIES
-        CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
-    target_compile_options(credential_store_test PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
-add_executable(store_test
-    tests/store_test.cpp
-)
-
-add_executable(store_list_test
-    tests/store_list_test.cpp
-)
-
-add_executable(store_find_test
-    tests/store_find_test.cpp
-)
-
-add_executable(store_sync_test
-    tests/store_sync_test.cpp
-)
-
-add_executable(store_write_test
-    tests/store_write_test.cpp
-)
-
-add_executable(sqlite_context_test
-    tests/sqlite_context_test.cpp
-)
-
-add_executable(data_dir_lock_test
-    tests/data_dir_lock_test.cpp
-)
-
-add_executable(mime_test
-    tests/mime_test.cpp
-)
-
-add_executable(imap_connection_test
-    tests/imap_connection_test.cpp
-)
-
-add_executable(imap_snapshot_test
-    tests/imap_snapshot_test.cpp
-)
-
-add_executable(imap_internal_date_test
-    tests/imap_internal_date_test.cpp
-)
-
-add_executable(imap_fetch_protocol_test
-    tests/imap_fetch_protocol_test.cpp
-)
-
-add_executable(sync_test
-    tests/sync_test.cpp
-)
-
-# 真实邮箱探针仅在显式构建和启用时执行，不注册到默认 CTest。
-add_executable(imap_live_probe EXCLUDE_FROM_ALL
-    tests/imap_live_probe.cpp
-)
-
-target_link_libraries(imap_connection_test PRIVATE CURL::libcurl)
-target_include_directories(imap_connection_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_include_directories(imap_snapshot_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_include_directories(imap_internal_date_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_include_directories(imap_fetch_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(sync_test PRIVATE SQLite3::SQLite3)
-target_include_directories(sync_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-
-target_link_libraries(store_test PRIVATE SQLite3::SQLite3)
-target_include_directories(store_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(store_list_test PRIVATE SQLite3::SQLite3)
-target_link_libraries(store_find_test PRIVATE SQLite3::SQLite3)
-target_link_libraries(store_sync_test PRIVATE SQLite3::SQLite3)
-target_link_libraries(store_write_test PRIVATE SQLite3::SQLite3)
-target_link_libraries(sqlite_context_test PRIVATE SQLite3::SQLite3)
-target_include_directories(sqlite_context_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(data_dir_lock_test PRIVATE SQLite3::SQLite3 Threads::Threads)
-
-# 可执行程序继承核心库的公开依赖。
-foreach(mailai_target IN ITEMS
-    mail_assistant
-    inbox_test
-    cli_test
-    config_test
-    login_profile_test
-    login_service_test
-    store_test
-    store_list_test
-    store_find_test
-    store_sync_test
-    store_write_test
-    sqlite_context_test
-    data_dir_lock_test
-    mime_test
-    imap_connection_test
-    imap_snapshot_test
-    imap_internal_date_test
-    imap_fetch_protocol_test
-    sync_test
-    imap_live_probe
-)
-    target_link_libraries(${mailai_target} PRIVATE mailai_core)
-endforeach()
-
-foreach(mailai_target IN ITEMS mail_assistant cli_test)
-    target_include_directories(${mailai_target} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+# C++ 单元测试：创建 <name>_test 程序并注册名为 <name> 的 CTest。
+function(mailai_add_unit_test name)
+    cmake_parse_arguments(ARG "INTERNAL" "WORKING_DIRECTORY;TIMEOUT" "SOURCES;LIBRARIES" ${ARGN})
+    set(internal_flag)
+    if(ARG_INTERNAL)
+        set(internal_flag INTERNAL)
+    endif()
+    mailai_add_test_executable(${name}_test ${internal_flag}
+        SOURCES ${ARG_SOURCES}
+        LIBRARIES ${ARG_LIBRARIES}
     )
-endforeach()
+    if(ARG_WORKING_DIRECTORY)
+        add_test(NAME ${name} COMMAND ${name}_test WORKING_DIRECTORY "${ARG_WORKING_DIRECTORY}")
+    else()
+        add_test(NAME ${name} COMMAND ${name}_test)
+    endif()
+    if(ARG_TIMEOUT)
+        set_tests_properties(${name} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+    endif()
+endfunction()
 
-# 项目各构建目标的公共配置。
-foreach(mailai_target IN ITEMS
-    mailai_core
-    mail_assistant
-    inbox_test
-    cli_test
-    config_test
-    login_profile_test
-    login_service_test
-    store_test
-    store_list_test
-    store_find_test
-    store_sync_test
-    store_write_test
-    sqlite_context_test
-    data_dir_lock_test
-    mime_test
-    imap_connection_test
-    imap_snapshot_test
-    imap_internal_date_test
-    imap_fetch_protocol_test
-    sync_test
-    imap_live_probe
-)
-    set_target_properties(${mailai_target} PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
+# Python 驱动的集成测试：脚本位于 tests 目录，其余参数传给脚本。
+function(mailai_add_python_test name script timeout)
+    add_test(NAME ${name}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${script}" ${ARGN}
     )
+    set_tests_properties(${name} PROPERTIES
+        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+        TIMEOUT ${timeout}
+    )
+endfunction()
 
-    target_compile_options(${mailai_target} PRIVATE
-        -Wall -Wextra -Wpedantic
-    )
-endforeach()
+set(MAILAI_MIME_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime")
 
 # 注册 CTest 测试。
 enable_testing()
 
-add_test(NAME inbox COMMAND inbox_test)
-add_test(NAME cli COMMAND cli_test)
-add_test(NAME config COMMAND config_test)
-add_test(NAME login_profile COMMAND login_profile_test)
-add_test(NAME login_service COMMAND login_service_test)
+mailai_add_unit_test(inbox SOURCES tests/inbox_test.cpp)
+mailai_add_unit_test(cli INTERNAL SOURCES tests/cli_test.cpp ${MAILAI_CLI_SOURCES})
+mailai_add_unit_test(config SOURCES tests/config_test.cpp)
+mailai_add_unit_test(login_profile SOURCES tests/login_profile_test.cpp)
+mailai_add_unit_test(login_service INTERNAL
+    SOURCES tests/login_service_test.cpp
+    LIBRARIES SQLite3::SQLite3
+)
 if(APPLE)
-    add_test(NAME credential_store COMMAND credential_store_test)
+    mailai_add_unit_test(credential_store INTERNAL
+        SOURCES tests/credential_store_test.cpp
+        LIBRARIES ${MAILAI_SECURITY_FRAMEWORK} ${MAILAI_COREFOUNDATION_FRAMEWORK}
+    )
 endif()
-add_test(NAME store COMMAND store_test)
-add_test(NAME store_list COMMAND store_list_test)
-add_test(NAME store_find COMMAND store_find_test)
-add_test(NAME store_sync COMMAND store_sync_test)
-add_test(NAME store_write COMMAND store_write_test)
-add_test(NAME sqlite_context COMMAND sqlite_context_test)
-add_test(NAME data_dir_lock COMMAND data_dir_lock_test)
-set_tests_properties(data_dir_lock PROPERTIES TIMEOUT 15)
-add_test(NAME mime
-    COMMAND mime_test
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime"
+mailai_add_unit_test(store INTERNAL SOURCES tests/store_test.cpp LIBRARIES SQLite3::SQLite3)
+mailai_add_unit_test(store_list SOURCES tests/store_list_test.cpp LIBRARIES SQLite3::SQLite3)
+mailai_add_unit_test(store_find SOURCES tests/store_find_test.cpp LIBRARIES SQLite3::SQLite3)
+mailai_add_unit_test(store_sync SOURCES tests/store_sync_test.cpp LIBRARIES SQLite3::SQLite3)
+mailai_add_unit_test(store_write SOURCES tests/store_write_test.cpp LIBRARIES SQLite3::SQLite3)
+mailai_add_unit_test(sqlite_context INTERNAL
+    SOURCES tests/sqlite_context_test.cpp
+    LIBRARIES SQLite3::SQLite3
 )
-add_test(NAME imap_fixture
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_fixture_test.py"
+mailai_add_unit_test(data_dir_lock
+    SOURCES tests/data_dir_lock_test.cpp
+    LIBRARIES SQLite3::SQLite3 Threads::Threads
+    TIMEOUT 15
 )
-set_tests_properties(imap_fixture PROPERTIES
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
-    TIMEOUT 30
+mailai_add_unit_test(mime SOURCES tests/mime_test.cpp WORKING_DIRECTORY "${MAILAI_MIME_FIXTURES}")
+mailai_add_unit_test(imap_snapshot INTERNAL SOURCES tests/imap_snapshot_test.cpp)
+mailai_add_unit_test(imap_internal_date INTERNAL SOURCES tests/imap_internal_date_test.cpp)
+mailai_add_unit_test(imap_fetch_protocol INTERNAL SOURCES tests/imap_fetch_protocol_test.cpp)
+mailai_add_unit_test(sync INTERNAL
+    SOURCES tests/sync_test.cpp
+    LIBRARIES SQLite3::SQLite3
+    WORKING_DIRECTORY "${MAILAI_MIME_FIXTURES}"
 )
-add_test(NAME imap_connection
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_connection_test.py"
-        "$<TARGET_FILE:imap_connection_test>"
+
+# imap_connection_test 由多个 Python 测试驱动，本身不直接注册。
+mailai_add_test_executable(imap_connection_test INTERNAL
+    SOURCES tests/imap_connection_test.cpp
+    LIBRARIES CURL::libcurl
 )
-set_tests_properties(imap_connection PROPERTIES
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
-    TIMEOUT 60
+
+# 真实邮箱探针仅在显式构建和启用时执行，不注册到默认 CTest。
+mailai_add_test_executable(imap_live_probe EXCLUDE_FROM_ALL SOURCES tests/imap_live_probe.cpp)
+
+mailai_add_python_test(imap_fixture imap_fixture_test.py 30)
+mailai_add_python_test(imap_connection imap_connection_test.py 60
+    "$<TARGET_FILE:imap_connection_test>"
 )
-add_test(NAME imap_snapshot COMMAND imap_snapshot_test)
-add_test(NAME imap_internal_date COMMAND imap_internal_date_test)
-add_test(NAME imap_fetch_protocol COMMAND imap_fetch_protocol_test)
-add_test(NAME sync
-    COMMAND sync_test
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mime"
-)
-add_test(NAME imap_fetch
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_fetch_test.py"
-        "$<TARGET_FILE:imap_connection_test>"
-)
-set_tests_properties(imap_fetch PROPERTIES
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
-    TIMEOUT 60
-)
-add_test(NAME imap_retry
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/imap_retry_test.py"
-        "$<TARGET_FILE:imap_connection_test>"
-)
-set_tests_properties(imap_retry PROPERTIES
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
-    TIMEOUT 120
-)
+mailai_add_python_test(imap_fetch imap_fetch_test.py 60 "$<TARGET_FILE:imap_connection_test>")
+mailai_add_python_test(imap_retry imap_retry_test.py 120 "$<TARGET_FILE:imap_connection_test>")
 
 add_test(NAME cli_smoke
     COMMAND "${CMAKE_COMMAND}"
         "-DMAIL_ASSISTANT=$<TARGET_FILE:mail_assistant>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke.cmake"
 )
-add_test(NAME cli_integration
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_integration_test.py"
-        "$<TARGET_FILE:mail_assistant>"
-)
-set_tests_properties(cli_integration PROPERTIES
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
-    TIMEOUT 60
-)
+mailai_add_python_test(cli_integration cli_integration_test.py 60 "$<TARGET_FILE:mail_assistant>")

@@ -154,8 +154,12 @@ Result<SyncSummary> sync_inbox(
     const auto attempted_at = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch())
                                   .count();
-    return sync_detail::sync_inbox(
-        store, config, {read_mailbox_snapshot, fetch_mail}, attempted_at, history_limit);
+    ImapSession session{config};
+    const sync_detail::MailSource source{
+        [&session](const RuntimeConfig&) { return session.read_mailbox_snapshot(); },
+        [&session](const RuntimeConfig&, const RemoteKey& key) { return session.fetch_mail(key); }
+    };
+    return sync_detail::sync_inbox(store, config, source, attempted_at, history_limit);
 }
 
 }  // namespace mailai

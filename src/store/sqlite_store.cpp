@@ -1,14 +1,14 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
+#include "mailai/error_message.h"
 #include "mailai/store.h"
 #include "schema.h"
 #include "sqlite_rows.h"
 #include "sqlite_utils.h"
-
-#include "mailai/error_message.h"
 
 namespace mailai {
 using store_detail::decode_attachment;
@@ -34,11 +34,21 @@ SqliteStore& SqliteStore::operator=(SqliteStore&& other) noexcept {
 }
 
 Result<SqliteStore> SqliteStore::open(const std::filesystem::path& path, OpenMode mode) {
-    const int flags = mode == OpenMode::read_write_create
-                          ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-                          : SQLITE_OPEN_READONLY;
+    int flags = mode == OpenMode::read_write_create ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+                                                    : SQLITE_OPEN_READONLY;
+    auto database_path = path;
+#ifdef SQLITE_OPEN_NOFOLLOW
+    flags |= SQLITE_OPEN_NOFOLLOW;
+    // 兼容 macOS 的 /var 等目录别名，数据库文件名本身交给 SQLite 做无链接检查。
+    if (const auto parent = path.parent_path(); !parent.empty()) {
+        std::error_code error;
+        const auto directory = std::filesystem::canonical(parent, error);
+        if (!error)
+            database_path = directory / path.filename();
+    }
+#endif
     sqlite3* db = nullptr;
-    const int rc = sqlite3_open_v2(path.c_str(), &db, flags, nullptr);
+    const int rc = sqlite3_open_v2(database_path.c_str(), &db, flags, nullptr);
     SqliteStore store(db);
     if (rc != SQLITE_OK) return std::unexpected(store_detail::sqlite_error(db, rc, "storage.open"));
 

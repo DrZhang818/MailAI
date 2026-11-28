@@ -23,23 +23,24 @@ bool has_service_unavailable(std::string_view response);
 // 收集两路 FETCH 数据并校验协议。该组件不依赖网络库。
 class FetchTransfer {
 public:
-    explicit FetchTransfer(const RemoteKey& key);
+    explicit FetchTransfer(const RemoteKey& key, std::uint32_t inherited_validity = 0);
 
     // 原文前缀之前每次接收一条完整协议行，之后可接收任意分片。
     bool append_header(std::string_view data);
     bool append_body(std::string_view data);
     void abort() noexcept;
 
-    // 优先报告协议已明确判定的错误，再报告传输失败，仅在传输成功时返回完整邮件。
-    Result<FetchedMail> finish(std::optional<Error> transport_error = std::nullopt) const;
+    // 优先报告协议已明确判定的错误。新连接必须在本次响应中提供 UIDVALIDITY。
+    Result<FetchedMail> finish(std::optional<Error> transport_error = std::nullopt,
+        bool require_observed_validity = false) const;
 
 private:
     bool fail(const char* message, ErrorCode code = ErrorCode::protocol_error) noexcept;
     bool append(std::string& buffer, std::string_view data);
 
     RemoteKey key;
-    std::uint32_t validity{};
-    bool selecting{};
+    std::uint32_t observed_validity{};
+    std::uint32_t inherited_validity{};
     bool target_without_body{};
     std::optional<std::size_t> prefix_offset;
     std::size_t literal_offset{};

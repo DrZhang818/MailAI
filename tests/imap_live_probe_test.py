@@ -57,6 +57,7 @@ if __name__ == "__main__":
         with ImapFixture() as fixture:
             fixture.server.search_uids = [101, 102, 103]
             out, err = run_probe(executable, fixture, directory, "1", 3)
+            assert len(fixture.server.connection_times) == 1
             assert "尝试 3" in out and "解析成功 1" in out and "失败 2" in out
             assert "remote_gone" in err and not fixture.server.seen
         with ImapFixture() as fixture:
@@ -67,6 +68,7 @@ if __name__ == "__main__":
             # 查询结果中其余 UID 均已消失，仍只能尝试最大的五个不同 UID。
             fixture.server.search_uids = [107, 101, 102, 103, 104, 105, 106, 107]
             out, err = run_probe(executable, fixture, directory, "1", 1)
+            assert len(fixture.server.connection_times) == 1
             assert "尝试 5" in out and "失败 5" in out and "remote_gone" in err
             assert fixture.server.fetch_uids == ["103", "104", "105", "106", "107"]
             assert not fixture.server.seen
