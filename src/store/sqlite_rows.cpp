@@ -1,13 +1,15 @@
 #include "sqlite_rows.h"
 
+#include "mailai/error_message.h"
+
 namespace mailai::store_detail {
 namespace {
 Result<ParseState> decode_parse_state(const SqlRow& row, std::string_view state) {
     if (state == "parsed") return ParseState::parsed;
     if (state == "failed") return ParseState::failed;
-    return row.fail("Invalid stored parse state");
+    return row.fail(error_message::storage::invalid_parse_state);
 }
-}  // 匿名命名空间
+}  // namespace
 
 Result<InboxItem> decode_inbox_item(const SqlRow& row) {
     InboxItem item;
@@ -23,7 +25,7 @@ Result<InboxItem> decode_inbox_item(const SqlRow& row) {
         item.historical
     );
     if (!decoded) return std::unexpected(decoded.error());
-    if (item.id == 0) return row.fail("Invalid stored mail ID");
+    if (item.id == 0) return row.fail(error_message::storage::invalid_stored_id);
 
     auto parsed = decode_parse_state(row, state);
     if (!parsed) return std::unexpected(parsed.error());
@@ -51,7 +53,7 @@ Result<Mail> decode_mail(const SqlRow& row) {
         mail.references
     );
     if (!decoded) return std::unexpected(decoded.error());
-    if (mail.uid_validity == 0 || mail.uid == 0) return row.fail("Invalid stored remote mail key");
+    if (mail.uid_validity == 0 || mail.uid == 0) return row.fail(error_message::storage::invalid_stored_key);
 
     auto parsed = decode_parse_state(row, state);
     if (!parsed) return std::unexpected(parsed.error());
@@ -77,9 +79,9 @@ Result<SyncState> decode_sync_state(const SqlRow& row) {
     if (!decoded) return std::unexpected(decoded.error());
     if ((state.uid_validity && *state.uid_validity == 0) ||
         (!state.uid_validity && state.last_discovered_uid != 0)) {
-        return row.fail("Invalid stored sync state");
+        return row.fail(error_message::storage::invalid_sync_state);
     }
     return state;
 }
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail

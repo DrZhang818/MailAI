@@ -8,6 +8,8 @@
 #include "sqlite_sync.h"
 #include "sqlite_utils.h"
 
+#include "mailai/error_message.h"
+
 namespace mailai {
 using store_detail::BlobView;
 using store_detail::SqlContext;
@@ -23,53 +25,25 @@ Status require_current_key(const RemoteKey& key, const SqlContext& context) {
     if (!state) return std::unexpected(state.error());
     if (!state->uid_validity || *state->uid_validity != key.uid_validity)
         return context.fail(
-            ErrorCode::invalid_argument, "Remote key does not match the current mailbox state");
-    return {};
-}
-
-std::string_view error_name(ErrorCode code) {
-    switch (code) {
-        case ErrorCode::unknown_account:
-            return "unknown_account";
-        case ErrorCode::mail_not_found:
-            return "mail_not_found";
-        case ErrorCode::invalid_argument:
-            return "invalid_argument";
-        case ErrorCode::config_error:
-            return "config_error";
-        case ErrorCode::auth_error:
-            return "auth_error";
-        case ErrorCode::network_error:
-            return "network_error";
-        case ErrorCode::protocol_error:
-            return "protocol_error";
-        case ErrorCode::remote_gone:
-            return "remote_gone";
-        case ErrorCode::parse_error:
-            return "parse_error";
-        case ErrorCode::storage_error:
-            return "storage_error";
-        case ErrorCode::busy:
-            return "busy";
-    }
+            ErrorCode::invalid_argument, error_message::storage::remote_key_mismatch);
     return {};
 }
 
 Status validate_completion(const SqlContext& context, const RemoteKey& remote, const Result<ParsedMail>& parsed) {
-    if (!valid_key(remote)) return context.fail(ErrorCode::invalid_argument, "Invalid remote mail key");
+    if (!valid_key(remote)) return context.fail(ErrorCode::invalid_argument, error_message::storage::invalid_remote_key);
     if (!parsed &&
         (parsed.error().code != ErrorCode::parse_error || parsed.error().message.empty())) {
-        return context.fail(ErrorCode::invalid_argument, "Invalid parsing failure");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::invalid_parse_failure);
     }
 
     constexpr auto max_integer = std::numeric_limits<std::int64_t>::max();
     if (parsed) {
         if (parsed->attachments.size() > static_cast<std::uint64_t>(max_integer))
-            return context.fail(ErrorCode::invalid_argument, "Too many attachments");
+            return context.fail(ErrorCode::invalid_argument, error_message::storage::too_many_attachments);
         for (const auto& attachment : parsed->attachments) {
             if (attachment.size_bytes > static_cast<std::uint64_t>(max_integer))
                 return context.fail(ErrorCode::invalid_argument,
-                    "Attachment size exceeds the SQLite integer range");
+                    error_message::storage::attachment_size_overflow);
         }
     }
 
@@ -124,8 +98,8 @@ Result<MailId> save_message(const SqlContext& context, const FetchedMail& mail, 
         store_detail::decode_scalar<MailId>
     );
     if (!found) return std::unexpected(found.error());
-    if (!*found) return context.fail(ErrorCode::storage_error, "Saved mail was not found");
-    if (**found == 0) return context.fail(ErrorCode::storage_error, "Invalid stored mail ID");
+    if (!*found) return context.fail(ErrorCode::storage_error, error_message::storage::saved_mail_missing);
+    if (**found == 0) return context.fail(ErrorCode::storage_error, error_message::storage::invalid_stored_id);
 
     return **found;
 }
@@ -177,7 +151,7 @@ Status update_pending_after_parse(const SqlContext& context, const RemoteKey& re
         {remote.account_id, remote.folder, remote.uid_validity, remote.uid, parsed.error().stage, parsed.error().message}
     );
 }
-}  // 匿名命名空间
+}  // namespace
 
 Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<ParsedMail>& parsed) {
     const SqlContext context{db_, "storage.complete", mail.key.account_id};
@@ -207,9 +181,9 @@ Result<MailId> SqliteStore::complete(const FetchedMail& mail, const Result<Parse
 
 Status SqliteStore::fail(const RemoteKey& key, const Error& error) {
     const SqlContext context{db_, "storage.fail", key.account_id};
-    const auto name = error_name(error.code);
+    const auto name = error_code_name(error.code);
     if (!valid_key(key) || name.empty() || error.message.empty()) {
-        return context.fail(ErrorCode::invalid_argument, "Invalid failure report");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::invalid_failure_report);
     }
 
     auto transaction = context.begin(store_detail::TransactionMode::write);
@@ -228,7 +202,7 @@ Status SqliteStore::fail(const RemoteKey& key, const Error& error) {
         {key.account_id, key.folder, key.uid_validity, key.uid, name, error.stage, error.message});
     if (!updated) return updated;
 
-    if (context.changes() == 0) return context.fail(ErrorCode::invalid_argument, "Pending job was not found");
+    if (context.changes() == 0) return context.fail(ErrorCode::invalid_argument, error_message::storage::pending_job_missing);
     return context.commit(*transaction);
 }
 
@@ -240,7 +214,7 @@ Status SqliteStore::record_outcome(
 ) {
     const SqlContext context{db_, "storage.outcome", account_id};
     if (account_id.empty() || folder.empty()) {
-        return context.fail(ErrorCode::invalid_argument, "Account and folder must not be empty");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::account_folder_required);
     }
 
     auto transaction = context.begin(store_detail::TransactionMode::write);
@@ -262,4 +236,4 @@ Status SqliteStore::record_outcome(
     return context.commit(*transaction);
 }
 
-}  // 命名空间 mailai
+}  // namespace mailai

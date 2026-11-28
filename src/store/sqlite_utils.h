@@ -45,6 +45,10 @@ struct BlobView {
     std::string_view bytes;
 };
 
+struct Blob {
+    std::string bytes;
+};
+
 using SqlValue = std::variant<std::nullptr_t, std::int64_t, std::string_view, BlobView>;
 
 class SqlContext;
@@ -66,6 +70,7 @@ private:
     Status column(int index, std::uint32_t& value) const;
     Status column(int index, bool& value) const;
     Status column(int index, std::string& value) const;
+    Status column(int index, Blob& value) const;
 
     template <class T>
     Status column(int index, std::optional<T>& value) const;
@@ -146,6 +151,6 @@ private:
     std::optional<MailId> mail_id_;
 };
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail
 
 #include "sqlite_utils.hpp"

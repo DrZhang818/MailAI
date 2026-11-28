@@ -17,11 +17,11 @@
 
 #include "imap_protocol.h"
 #include "imap_transport.h"
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 
 namespace mailai {
 namespace {
-namespace errors = error_messages::imap;
+namespace errors = error_message::imap;
 
 // 公共连接、错误分类和重试工具。
 struct CurlGlobal {
@@ -126,7 +126,7 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
 
     // 1. 检查配置并读取密码
     if (!valid_text(config.account.id) || !valid_text(imap.host) || !valid_text(imap.username) ||
-        !valid_text(imap.credential_env) || imap.credential_env.find('=') != std::string::npos) {
+        !valid_credential_reference(imap.credential_env)) {
         return fail(errors::invalid_settings);
     }
     if (!mailbox_path.starts_with('/') || !valid_text(mailbox_path)) {
@@ -151,11 +151,17 @@ Result<imap_detail::CurlHandle> make_imap_handle_impl(const RuntimeConfig& confi
         return fail(errors::invalid_ca_path);
     }
 
-    const char* password_value = std::getenv(imap.credential_env.c_str());
-    if (password_value == nullptr || password_value[0] == '\0') {
-        return fail(errors::missing_password);
+    std::string password;
+    if (config.credential_provider) {
+        auto supplied = config.credential_provider();
+        if (!supplied)
+            return std::unexpected(supplied.error());
+        password = std::move(*supplied);
+    } else if (const char* password_value = std::getenv(imap.credential_env.c_str())) {
+        password = password_value;
     }
-    const std::string password{password_value};
+    if (!valid_text(password))
+        return fail(errors::missing_password);
 
     // 2. 初始化 libcurl 和 easy handle
     static const CurlGlobal global;

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "mail/imap_transport.h"
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 #include "mailai/imap.h"
 #include "test_support.h"
 
@@ -57,7 +57,8 @@ void expect_invalid_settings(const mailai::RuntimeConfig& good) {
 
 void expect_snapshot_query(const mailai::RuntimeConfig& config, std::string_view scenario) {
     const auto snapshot = mailai::read_mailbox_snapshot(config);
-    if (scenario == "ok" || scenario == "empty" || scenario == "timeout-recover") {
+    if (scenario == "ok" || scenario == "empty" || scenario == "timeout-recover" ||
+        scenario == "provider") {
         expect(snapshot.has_value(), "valid inbox query should return a snapshot");
         expect(snapshot->uid_validity == 77, "unexpected server UIDVALIDITY");
         const std::vector<std::uint32_t> expected =
@@ -99,7 +100,7 @@ void expect_fetch(const mailai::RuntimeConfig& config, std::string_view scenario
         key.uid = 102;
 
     const auto result = mailai::fetch_mail(config, key);
-    if (scenario == "ok" || scenario == "timeout-recover" || scenario == "body-first" ||
+    if (scenario == "ok" || scenario == "provider" || scenario == "timeout-recover" || scenario == "body-first" ||
         scenario == "flags-before" || scenario == "binary" || scenario == "no-final-crlf" ||
         scenario == "at-limit") {
         expect(result.has_value(), "valid UID FETCH should return a mail");
@@ -135,7 +136,7 @@ void expect_fetch(const mailai::RuntimeConfig& config, std::string_view scenario
     }
     expect(!result && result.error().code == expected, "unexpected UID FETCH error type");
     if (scenario == "over-limit") {
-        expect(result.error().message == mailai::error_messages::imap::fetch_too_large,
+        expect(result.error().message == mailai::error_message::imap::fetch_too_large,
             "oversized literal should be rejected by the size guard");
     }
     expect(result.error().account_id == config.account.id, "error should identify the account");
@@ -148,7 +149,7 @@ void expect_fetch(const mailai::RuntimeConfig& config, std::string_view scenario
         "error should not include the test password or message contents");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main(int argc, char** argv) {
     try {
@@ -167,6 +168,8 @@ int main(int argc, char** argv) {
         config.imap.port = static_cast<std::uint16_t>(std::stoul(argv[1]));
         config.imap.username = "mailai-test";
         config.imap.credential_env = "MAILAI_FIXTURE_PASSWORD";
+        if (scenario == "provider")
+            config.credential_provider = [] { return std::string{"fixture-only-password"}; };
         config.imap.tls_mode = std::string_view{argv[3]} == "implicit" ? mailai::TlsMode::implicit
                                                                        : mailai::TlsMode::starttls;
         config.imap.connect_timeout = std::chrono::seconds{2};

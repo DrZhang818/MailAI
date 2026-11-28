@@ -10,6 +10,8 @@
 
 #include "sqlite_utils.h"
 
+#include "mailai/error_message.h"
+
 namespace mailai::store_detail {
 namespace {
 // 保留版本 1 的 SQL 文本，因为 SQLite 会保存其中的空白字符。
@@ -154,20 +156,20 @@ Status compare_catalogs(const Catalog& actual, const Catalog& expected) {
 
     if (i == actual.size() && i == expected.size()) return {};
 
-    if (i == actual.size()) return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
+    if (i == actual.size()) return std::unexpected(schema_error(error_message::storage::missing_schema_object + expected[i].name));
 
-    if (i == expected.size()) return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
+    if (i == expected.size()) return std::unexpected(schema_error(error_message::storage::unexpected_schema_object + actual[i].name));
 
     const auto actual_key   = std::tie(actual[i].type, actual[i].name);
     const auto expected_key = std::tie(expected[i].type, expected[i].name);
 
-    if (actual_key < expected_key) return std::unexpected(schema_error("Unexpected schema object: " + actual[i].name));
+    if (actual_key < expected_key) return std::unexpected(schema_error(error_message::storage::unexpected_schema_object + actual[i].name));
 
-    if (expected_key < actual_key) return std::unexpected(schema_error("Missing schema object: " + expected[i].name));
+    if (expected_key < actual_key) return std::unexpected(schema_error(error_message::storage::missing_schema_object + expected[i].name));
 
-    return std::unexpected(schema_error("Schema definition mismatch: " + expected[i].name));
+    return std::unexpected(schema_error(error_message::storage::schema_mismatch + expected[i].name));
 }
-}  // 匿名命名空间
+}  // namespace
 
 Status ensure_schema(sqlite3* db, OpenMode mode) {
     const SqlContext context{db, "storage.schema"};
@@ -179,7 +181,7 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
     if (!version) return std::unexpected(version.error());
     if (*version != 0 && *version != schema_version)
         return std::unexpected(
-            schema_error("Unsupported database version: " + std::to_string(*version)));
+            schema_error(error_message::storage::unsupported_database_version + std::to_string(*version)));
 
     auto actual = read_catalog(db);
     if (!actual) return std::unexpected(actual.error());
@@ -188,11 +190,11 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
     if (*version == 0) {
         if (!actual->empty())
             return std::unexpected(
-                schema_error("Cannot initialize a non-empty unversioned database"));
+                schema_error(error_message::storage::nonempty_unversioned_database));
 
         if (mode == OpenMode::read_only)
             return std::unexpected(
-                schema_error("Database requires initialization with write access"));
+                schema_error(error_message::storage::readonly_initialization));
 
         for (const auto* sql : version_one_sql) {
             auto created = initialize.execute(sql);
@@ -216,4 +218,4 @@ Status ensure_schema(sqlite3* db, OpenMode mode) {
 
     return context.commit(*transaction);
 }
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail

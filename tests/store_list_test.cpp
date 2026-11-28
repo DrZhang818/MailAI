@@ -237,7 +237,7 @@ void test_invalid_rows_do_not_return_partial_results() {
         }
     }
 }
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     const std::pair<const char*, void (*)()> tests[]{

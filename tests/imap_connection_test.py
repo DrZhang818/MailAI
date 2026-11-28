@@ -38,6 +38,9 @@ if __name__ == "__main__":
             run_client(executable, fixture, mode, "untrusted", TEST_PASSWORD)
             run_client(executable, fixture, mode, "snapshot-ok", TEST_PASSWORD)
             assert not fixture.server.seen and fixture.server.search_requests == 1
+            run_client(executable, fixture, mode, "snapshot-provider", None, 1)
+            run_client(executable, fixture, mode, "fetch-provider", None, 1)
+            assert not fixture.server.seen
             run_client(executable, fixture, mode, "snapshot-wrong-password", "wrong-test-password", 1)
             run_client(executable, fixture, mode, "snapshot-missing-password", None, 0)
             run_client(executable, fixture, mode, "snapshot-untrusted", TEST_PASSWORD, 1)

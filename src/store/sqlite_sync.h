@@ -10,4 +10,4 @@ Result<SyncState> load_sync_state(
     const SqlContext& context, const AccountId& account_id, std::string_view folder
 );
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail

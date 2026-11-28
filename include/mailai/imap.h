@@ -13,4 +13,4 @@ Result<MailboxSnapshot> read_mailbox_snapshot(const RuntimeConfig& config);
 // 临时故障最多重试两次，重连后重新核对 UIDVALIDITY。
 Result<FetchedMail> fetch_mail(const RuntimeConfig& config, const RemoteKey& key);
 
-}  // 命名空间 mailai
+}  // namespace mailai

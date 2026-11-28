@@ -10,8 +10,8 @@ PointerAlignment: Left
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 
-# 保留中文命名空间结束注释，不自动生成英文注释。
-FixNamespaceComments: false
+# 命名空间闭合注释统一采用英文格式。
+FixNamespaceComments: true
 
 # 使用固定续行缩进，避免按较长的函数名对齐。
 AlignAfterOpenBracket: false

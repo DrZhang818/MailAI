@@ -39,10 +39,12 @@ class _Server(socketserver.ThreadingTCPServer):
         self.connect_failures = connect_failures
         self.allow_starttls = allow_starttls
         self.search_requests = 0
+        self.search_uids = None
         self.uid_validity = uid_validity
         self.fetch_mode = fetch_mode
         self.fetch_requests = 0
         self.fetch_items = []
+        self.fetch_uids = []
         self.connection_times = []
         self.select_validities = []
         self.failure_times = []
@@ -186,7 +188,10 @@ class _Handler(socketserver.BaseRequestHandler):
                 return False
             if mode == "timeout":
                 time.sleep(2)
-            ids = " 101" if self.server.raw is not None else ""
+            if self.server.search_uids is None:
+                ids = " 101" if self.server.raw is not None else ""
+            else:
+                ids = "".join(f" {uid}" for uid in self.server.search_uids)
             self._send(f"* SEARCH{ids}\r\n{tag} OK UID SEARCH completed\r\n")
         elif upper.startswith("FETCH "):
             fields = upper.split(maxsplit=2)
@@ -195,6 +200,7 @@ class _Handler(socketserver.BaseRequestHandler):
                 return True
             self.server.fetch_requests += 1
             self.server.fetch_items.append(fields[2])
+            self.server.fetch_uids.append(fields[1])
             mode = self.server.fetch_mode
             if (self.server.fetch_failures is not None and
                     self.server.fetch_requests > self.server.fetch_failures):

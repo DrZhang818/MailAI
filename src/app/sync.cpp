@@ -1,6 +1,5 @@
 #include "mailai/sync.h"
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 #include "mailai/imap.h"
 #include "mailai/mime.h"
 #include "mailai/store.h"
@@ -18,7 +17,7 @@
 namespace mailai {
 namespace {
 
-namespace errors = error_messages::sync;
+namespace errors = error_message::sync;
 
 constexpr std::string_view inbox_folder = "INBOX";
 constexpr std::size_t initial_limit = 20;
@@ -74,8 +73,10 @@ Status process_mail(SqliteStore& store,
     return {};
 }
 
-Result<SyncSummary> run_sync_round(
-    SqliteStore& store, const RuntimeConfig& config, const sync_detail::MailSource& source) {
+Result<SyncSummary> run_sync_round(SqliteStore& store,
+    const RuntimeConfig& config,
+    const sync_detail::MailSource& source,
+    std::size_t history_limit) {
     const auto& account_id = config.account.id;
     auto previous = store.state(account_id, inbox_folder);
     if (!previous)
@@ -85,7 +86,18 @@ Result<SyncSummary> run_sync_round(
     if (!snapshot)
         return std::unexpected(snapshot.error());
 
-    auto scheduled = store.schedule(account_id, inbox_folder, *snapshot, initial_limit);
+    SyncSummary summary;
+    summary.reindexed = previous->uid_validity && *previous->uid_validity != snapshot->uid_validity;
+    std::size_t previous_pending = 0;
+    if (previous->uid_validity && !summary.reindexed) {
+        const auto retries = store.pending(account_id, inbox_folder);
+        if (!retries)
+            return std::unexpected(retries.error());
+        previous_pending = retries->size();
+    }
+
+    auto scheduled =
+        store.schedule(account_id, inbox_folder, *snapshot, initial_limit, history_limit);
     if (!scheduled)
         return std::unexpected(scheduled.error());
 
@@ -93,14 +105,8 @@ Result<SyncSummary> run_sync_round(
     if (!jobs)
         return std::unexpected(jobs.error());
 
-    SyncSummary summary;
-    summary.reindexed = previous->uid_validity && *previous->uid_validity != snapshot->uid_validity;
-    // 以存储实际安排的任务为准，旧待办不计入本轮新增数量。
-    summary.discovered =
-        !previous->uid_validity || summary.reindexed
-            ? jobs->size()
-            : static_cast<std::size_t>(std::ranges::count_if(*jobs,
-                  [&](const RemoteKey& key) { return key.uid > previous->last_discovered_uid; }));
+    // 同一 UIDVALIDITY 下原有待办保持不变，新增数量同时包含增量任务和历史补收任务。
+    summary.discovered = jobs->size() - previous_pending;
 
     // 此时发现进度和待办已经提交，网络请求期间不持有写事务。
     for (const auto& key : *jobs) {
@@ -111,14 +117,15 @@ Result<SyncSummary> run_sync_round(
     return summary;
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 namespace sync_detail {
 
 Result<SyncSummary> sync_inbox(SqliteStore& store,
     const RuntimeConfig& config,
     const MailSource& source,
-    std::int64_t attempted_at) {
+    std::int64_t attempted_at,
+    std::size_t history_limit) {
     if (!source.read_snapshot || !source.fetch) {
         return std::unexpected(Error{
             ErrorCode::invalid_argument,
@@ -133,21 +140,22 @@ Result<SyncSummary> sync_inbox(SqliteStore& store,
     if (!account)
         return std::unexpected(account.error());
 
-    auto outcome = run_sync_round(store, config, source);
+    auto outcome = run_sync_round(store, config, source, history_limit);
     auto recorded = store.record_outcome(config.account.id, inbox_folder, outcome, attempted_at);
     if (!recorded)
         return std::unexpected(recorded.error());
     return outcome;
 }
 
-}  // 命名空间 sync_detail
+}  // namespace sync_detail
 
-Result<SyncSummary> sync_inbox(SqliteStore& store, const RuntimeConfig& config) {
+Result<SyncSummary> sync_inbox(
+    SqliteStore& store, const RuntimeConfig& config, std::size_t history_limit) {
     const auto attempted_at = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch())
                                   .count();
     return sync_detail::sync_inbox(
-        store, config, {read_mailbox_snapshot, fetch_mail}, attempted_at);
+        store, config, {read_mailbox_snapshot, fetch_mail}, attempted_at, history_limit);
 }
 
-}  // 命名空间 mailai
+}  // namespace mailai

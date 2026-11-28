@@ -11,4 +11,4 @@ Result<Mail> decode_mail(const SqlRow& row);
 Result<AttachmentInfo> decode_attachment(const SqlRow& row);
 Result<SyncState> decode_sync_state(const SqlRow& row);
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail

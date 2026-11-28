@@ -511,6 +511,76 @@ void test_schedule_skips_successfully_saved_mail_but_keeps_parse_failures() {
         "discovery must not replace existing message content or IDs");
 }
 
+void test_schedule_history_skips_cached_and_preexisting_jobs() {
+    TempDirectory directory;
+    const auto path = directory.path() / "schedule-history.sqlite3";
+    seed(path);
+    Database db(path);
+    db.execute(R"sql(
+        INSERT INTO sync_state VALUES ('school','INBOX',100,8,0,-10);
+        INSERT INTO sync_pending VALUES
+            ('school','INBOX',100,7,1,'network_error','imap.fetch','retry later'),
+            ('school','INBOX',100,6,0,'remote_gone','imap.fetch','gone');
+        INSERT INTO messages
+            (id,account_id,folder,uid_validity,uid,sender,subject,body,
+             received_at_utc,raw,parse_state,parse_error)
+        VALUES
+            (101,'school','INBOX',100,8,'sender','saved','body',10,X'0001','parsed',''),
+            (102,'school','INBOX',100,5,'sender','(解析失败)','',11,X'0002','failed','bad MIME'),
+            (103,'school','Archive',100,4,'sender','saved','body',10,X'0003','parsed',''),
+            (104,'school','INBOX',99,3,'sender','saved','body',10,X'0004','parsed','');
+    )sql");
+    auto store = SqliteStore::open(path, OpenMode::read_write_create);
+    expect(store.has_value(), "history schedule database should open");
+    const auto old_jobs = db.rows("SELECT * FROM sync_pending ORDER BY uid");
+    const auto saved = db.rows("SELECT * FROM messages ORDER BY id");
+    const MailboxSnapshot snapshot{100, {9, 7, 6, 2, 8, 5, 3, 1, 10, 4, 4}};
+    expect(store->schedule("school", "INBOX", snapshot, 2, 2).has_value(),
+        "history scheduling should succeed");
+    expect_pending(store->pending("school", "INBOX"), "school", "INBOX", 100, {3, 4, 7, 9, 10});
+    expect_state(store->state("school", "INBOX"), 100, 10, 0, -10);
+
+    expect(store->schedule("school", "INBOX", snapshot, 2, 2).has_value(),
+        "further history scheduling should skip previously scheduled history");
+    expect_pending(
+        store->pending("school", "INBOX"), "school", "INBOX", 100, {1, 2, 3, 4, 7, 9, 10});
+    expect(store->schedule("school", "INBOX", snapshot, 2, std::numeric_limits<std::size_t>::max())
+               .has_value(),
+        "all should succeed without duplicating cached or previously scheduled mail");
+    expect_pending(
+        store->pending("school", "INBOX"), "school", "INBOX", 100, {1, 2, 3, 4, 7, 9, 10});
+    expect(db.rows("SELECT * FROM sync_pending WHERE uid IN (6,7) ORDER BY uid") == old_jobs &&
+               db.rows("SELECT * FROM messages ORDER BY id") == saved,
+        "history scheduling must preserve cached mail, retry flags, and diagnostics");
+}
+
+void test_schedule_rolls_back_normal_work_after_history_insert_failure() {
+    TempDirectory directory;
+    const auto path = directory.path() / "schedule-history-rollback.sqlite3";
+    seed(path);
+    auto store = SqliteStore::open(path, OpenMode::read_write_create);
+    expect(store.has_value(), "history rollback database should open");
+    const MailboxSnapshot first{100, {1, 2, 3, 4}};
+    expect(
+        store->schedule("school", "INBOX", first, 1).has_value(), "initial sync should schedule");
+    Database db(path);
+    db.execute(
+        "CREATE TRIGGER reject_history BEFORE INSERT ON sync_pending WHEN NEW.uid=3 "
+        "BEGIN SELECT RAISE(ABORT,'history unavailable'); END");
+    const MailboxSnapshot next{100, {1, 2, 3, 4, 5}};
+    expect_error(store->schedule("school", "INBOX", next, 1, 1),
+        ErrorCode::storage_error,
+        "school",
+        "storage.schedule");
+    expect_pending(store->pending("school", "INBOX"), "school", "INBOX", 100, {4});
+    expect_state(store->state("school", "INBOX"), 100, 4, std::nullopt, std::nullopt);
+    db.execute("DROP TRIGGER reject_history");
+    expect(store->schedule("school", "INBOX", next, 1, 1).has_value(),
+        "history scheduling can be retried after a transaction failure");
+    expect_pending(store->pending("school", "INBOX"), "school", "INBOX", 100, {3, 4, 5});
+    expect_state(store->state("school", "INBOX"), 100, 5, std::nullopt, std::nullopt);
+}
+
 template <class Store>
 void test_schedule_new_uidvalidity_preserves_history_and_other_folders() {
     TempDirectory directory;
@@ -641,6 +711,8 @@ void run_schedule_tests() {
     test_schedule_preserves_failed_jobs_and_never_moves_cursor_backwards<SqliteStore>();
     test_schedule_empty_first_snapshot_does_not_limit_later_mail<SqliteStore>();
     test_schedule_skips_successfully_saved_mail_but_keeps_parse_failures<SqliteStore>();
+    test_schedule_history_skips_cached_and_preexisting_jobs();
+    test_schedule_rolls_back_normal_work_after_history_insert_failure();
     test_schedule_new_uidvalidity_preserves_history_and_other_folders<SqliteStore>();
     test_schedule_rolls_back_progress_jobs_and_history_after_insert_failure<SqliteStore>();
     test_schedule_read_only_failure_preserves_records<SqliteStore>();
@@ -655,7 +727,7 @@ void run_pending_tests() {
     test_pending_sql_failure_and_recovery<SqliteStore>();
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

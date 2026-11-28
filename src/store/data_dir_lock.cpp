@@ -12,6 +12,8 @@
 
 #include "mailai/data_dir_lock.h"
 
+#include "mailai/error_message.h"
+
 namespace mailai {
 namespace {
 
@@ -19,7 +21,7 @@ Error lock_error(ErrorCode code, std::string message) {
     return Error{code, std::move(message), std::nullopt, std::nullopt, "storage.lock"};
 }
 
-} // 匿名命名空间
+} // namespace
 
 DataDirLock::~DataDirLock() {
     if(fd_ >= 0) ::close(fd_);
@@ -39,7 +41,7 @@ DataDirLock& DataDirLock::operator=(DataDirLock&& other) noexcept {
 Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, std::chrono::milliseconds wait) {
     if (data_dir.empty() || data_dir.native().find('\0') != std::string::npos || wait.count() < 0) {
         return std::unexpected(
-            lock_error(ErrorCode::invalid_argument, "Invalid data-directory lock settings")
+            lock_error(ErrorCode::invalid_argument, error_message::storage::invalid_lock_settings)
         );
     }
 
@@ -54,7 +56,7 @@ Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, 
         return std::unexpected(
             lock_error(
                 ErrorCode::storage_error,
-                "Cannot open data-directory lock: " +
+                error_message::storage::lock_open_failed +
                     std::error_code{errno, std::generic_category()}.message()
             )
         );
@@ -71,7 +73,7 @@ Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, 
             return std::unexpected(
                 lock_error(
                     ErrorCode::storage_error,
-                    "Cannot acquire data-directory lock: " +
+                    error_message::storage::lock_acquire_failed +
                         std::error_code{error, std::generic_category()}.message()
                 )
             );
@@ -83,7 +85,7 @@ Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, 
 
         if (elapsed >= wait) {
             return std::unexpected(
-                lock_error(ErrorCode::busy, "Data directory is busy")
+                lock_error(ErrorCode::busy, error_message::storage::directory_busy)
             );
         }
 
@@ -93,4 +95,4 @@ Result<DataDirLock> DataDirLock::acquire(const std::filesystem::path& data_dir, 
     }
 }
 
-} // 命名空间 mailai
+} // namespace mailai

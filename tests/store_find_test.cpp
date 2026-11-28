@@ -83,6 +83,12 @@ void test_full_details_and_owned_values() {
             const auto repeated = store->find(42);
             expect(repeated.has_value(), "successful query must leave the connection reusable");
             expect_full_mail(*repeated);
+            const auto raw = store->read_raw(42);
+            expect(raw && *raw == std::string{"a\0b", 3},
+                "raw MIME bytes are read as a BLOB, including embedded NUL");
+            const auto missing = store->read_raw(999);
+            expect(!missing && missing.error().code == ErrorCode::mail_not_found,
+                "raw lookup distinguishes missing mail");
         }
         expect_full_mail(saved);
     }
@@ -201,7 +207,7 @@ void test_invalid_stored_fields() {
             expect_error(store->find(42), ErrorCode::storage_error, 42);
     }
 }
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     const std::pair<const char*, void (*)()> tests[]{

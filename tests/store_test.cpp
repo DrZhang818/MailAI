@@ -322,6 +322,12 @@ void test_account_save_and_identity_protection() {
         expect(!result && result.error().code == ErrorCode::config_error,
                "identity changes should be rejected");
     }
+    auto invalid_reference = imap;
+    invalid_reference.credential_env = "TEST_REF=fixture-only-value";
+    const auto rejected = store->ensure_account(account, invalid_reference);
+    expect(!rejected && rejected.error().code == ErrorCode::config_error &&
+               rejected.error().message.find("fixture-only-value") == std::string::npos,
+        "storage must reject a credential assignment without revealing it");
     Database db(path, SQLITE_OPEN_READONLY);
     expect(db.integer("SELECT count(*) FROM accounts") == 1, "saving must not duplicate accounts");
     expect(db.text("SELECT display_name FROM accounts") == account.display_name,
@@ -533,7 +539,7 @@ void test_corrupt_schema() {
     expect(std::filesystem::file_size(path) > 0,
            "corrupt schema file must not be removed or replaced with an empty file");
 }
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     const std::pair<const char*, void (*)()> tests[]{

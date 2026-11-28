@@ -13,10 +13,10 @@
 #include <system_error>
 #include <utility>
 
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 
 namespace mailai::imap_detail {
-namespace errors = error_messages::imap;
+namespace errors = error_message::imap;
 namespace {
 
 // 通用协议解析工具。
@@ -281,7 +281,7 @@ std::optional<FetchLiteral> separate_fetch_literal(std::string_view headers,
     return FetchLiteral{*complete, body, remainder.substr(0, missing)};
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 FetchTransfer::FetchTransfer(const RemoteKey& remote_key) : key(remote_key) {}
 
@@ -538,4 +538,4 @@ bool has_service_unavailable(std::string_view response) {
     return false;
 }
 
-}  // 命名空间 mailai::imap_detail
+}  // namespace mailai::imap_detail

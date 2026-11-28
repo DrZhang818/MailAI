@@ -50,4 +50,4 @@ private:
     const char* error{};
 };
 
-}  // 命名空间 mailai::imap_detail
+}  // namespace mailai::imap_detail

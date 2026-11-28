@@ -19,5 +19,6 @@ struct ParsedMail {
 };
 
 Result<ParsedMail> parse_message(std::string_view raw);
+Result<std::vector<BodyBlock>> parse_body_blocks(std::string_view raw);
 
-}  // 命名空间 mailai
+}  // namespace mailai

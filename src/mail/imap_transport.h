@@ -15,4 +15,4 @@ using CurlHandle = std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>;
 Result<CurlHandle> make_imap_handle(
     const RuntimeConfig& config, std::string_view mailbox_path = "/");
 
-}  // 命名空间 mailai::imap_detail
+}  // namespace mailai::imap_detail

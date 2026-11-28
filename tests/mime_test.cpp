@@ -65,6 +65,126 @@ void expect_html_text(std::string_view html, std::string_view expected) {
     expect(mail->body == expected, "HTML text should match the expected UTF-8 bytes");
 }
 
+std::vector<mailai::BodyBlock> parse_blocks(std::string_view raw) {
+    auto result = mailai::parse_body_blocks(raw);
+    if (!result) {
+        throw std::runtime_error(
+            "expected successful structured MIME parsing: " + result.error().message);
+    }
+    return std::move(*result);
+}
+
+void expect_text_block(const mailai::BodyBlock& block, std::string_view expected) {
+    const auto* text = std::get_if<std::string>(&block);
+    expect(text != nullptr && *text == expected, "unexpected body text block");
+}
+
+void expect_table_block(
+    const mailai::BodyBlock& block, const std::vector<std::vector<std::string>>& expected) {
+    const auto* table = std::get_if<mailai::BodyTable>(&block);
+    expect(table != nullptr && table->rows == expected, "unexpected body table rows");
+}
+
+void expect_structured_table_alternative() {
+    const std::string raw =
+        "MIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=alt\n\n"
+        "--alt\nContent-Type: text/plain; charset=UTF-8\n\n纯文本备用正文\n"
+        "--alt\nContent-Type: multipart/related; boundary=related\n\n"
+        "--related\nContent-Type: text/html; charset=UTF-8\n\n"
+        "<body><p>导语</p><table><tr><th>分类</th><th colspan='2'>具体内容</th></tr>"
+        "<tr><td rowspan='2'><p>项目</p></td><td><div>甲</div></td><td>乙</td></tr>"
+        "<tr><td><p>丙</p><div>丁</div></td><td>戊</td></tr></table>"
+        "<p>结语<img src='cid:chart'><img src='https://example.test/chart.png'></p></body>\n"
+        "--related\nContent-Type: image/png\nContent-ID: <chart>\n"
+        "Content-Transfer-Encoding: base64\n\naW1hZ2U=\n--related--\n--alt--\n";
+
+    expect(parse_raw(raw).body == "纯文本备用正文", "stored body should still prefer plain text");
+
+    const auto blocks = parse_blocks(raw);
+    expect(blocks.size() == 3, "structured HTML alternative should preserve surrounding text");
+    expect_text_block(blocks[0], "导语");
+    expect_table_block(
+        blocks[1], {{"分类", "具体内容", ""}, {"项目", "甲", "乙"}, {"项目", "丙\n丁", "戊"}});
+    expect_text_block(blocks[2], "结语");
+}
+
+void expect_nested_table_and_mixed_text() {
+    const auto blocks = parse_blocks(
+        "Content-Type: multipart/mixed; boundary=mixed\n\n"
+        "--mixed\nContent-Type: text/plain; charset=UTF-8\n\n前置内容\n"
+        "--mixed\nContent-Type: text/html; charset=UTF-8\n\n"
+        "<table><tr><td><p>说明</p><table><caption>统计表</caption>"
+        "<thead><tr><th>名称</th><th>数量</th></tr></thead>"
+        "<tbody><tr><td>甲</td><td>2</td></tr><tr><td>乙</td><td>3</td></tr></tbody>"
+        "</table><p>注释</p></td></tr></table>\n"
+        "--mixed\nContent-Type: text/plain; charset=UTF-8\n\n后续内容\n--mixed--\n");
+    expect(blocks.size() == 5, "nested data table should retain mixed siblings and layout text");
+    expect_text_block(blocks[0], "前置内容");
+    expect_text_block(blocks[1], "说明\n统计表");
+    expect_table_block(blocks[2], {{"名称", "数量"}, {"甲", "2"}, {"乙", "3"}});
+    expect_text_block(blocks[3], "注释");
+    expect_text_block(blocks[4], "后续内容");
+}
+
+void expect_bounded_table_spans() {
+    const auto blocks = parse_blocks(
+        "Content-Type: text/html; charset=UTF-8\n\n"
+        "<table><thead><tr><th rowspan='0'>标题</th><th>值</th></tr>"
+        "<tr><th>说明</th></tr></thead><tbody>"
+        "<tr><td colspan='99999999999999999999'>甲</td><td "
+        "rowspan='99999999999999999999'>1</td></tr>"
+        "<tr><td>乙</td><td>2</td></tr></tbody></table>");
+    expect(blocks.size() == 1, "excessive span attributes should not invalidate a readable table");
+    expect_table_block(blocks[0], {{"标题", "值"}, {"标题", "说明"}, {"甲", "1"}, {"乙", "2"}});
+}
+
+void expect_shared_table_spans() {
+    const auto blocks = parse_blocks(
+        "Content-Type: text/html; charset=UTF-8\n\n"
+        "<table><tr><td>甲</td><td rowspan='2' colspan='2'>合计</td><td>乙</td></tr>"
+        "<tr><td>丙</td><td>丁</td></tr></table>");
+    expect(blocks.size() == 1, "combined spans should produce one table");
+    expect_table_block(blocks[0], {{"甲", "合计", "", "乙"}, {"丙", "合计", "", "丁"}});
+}
+
+void expect_overwide_table_text_fallback() {
+    std::string raw =
+        "Content-Type: text/html; charset=UTF-8\n\n"
+        "<table><tr><td>名称</td><td>数量</td></tr><tr><td>甲</td><td>1</td></tr></table>"
+        "<table><tr>";
+    for (int i = 0; i < 140; ++i) {
+        raw += "<td>列" + std::to_string(i) + "</td>";
+    }
+    raw += "</tr></table><p>末尾正文</p>";
+
+    const auto blocks = parse_blocks(raw);
+    expect(blocks.size() == 2, "overwide table should not expand the structured grid");
+    expect_table_block(blocks[0], {{"名称", "数量"}, {"甲", "1"}});
+    const auto* remainder = std::get_if<std::string>(&blocks[1]);
+    expect(remainder != nullptr && remainder->find("列0") != std::string::npos &&
+               remainder->find("列139") != std::string::npos &&
+               remainder->find("末尾正文") != std::string::npos,
+        "overwide table fallback should keep all cell text and following content");
+}
+
+void expect_body_blocks_fallback() {
+    expect(parse_blocks("Content-Type: text/plain; charset=UTF-8\n\n正文").empty(),
+        "plain text should use the existing stored body");
+    expect(parse_blocks("Content-Type: text/html; charset=UTF-8\n\n<p>正文</p>").empty(),
+        "HTML without data tables should use the existing stored body");
+    expect(parse_blocks("Content-Type: text/html; charset=UTF-8\n\n"
+                        "<table><tr><td><img src='cid:chart'></td></tr></table>")
+               .empty(),
+        "image-only tables should use the existing stored body");
+    expect(parse_blocks("Content-Type: multipart/mixed; boundary=test\n\n"
+                        "--test\nContent-Type: text/plain\n\nplain\n"
+                        "--test\nContent-Type: text/html\n"
+                        "Content-Disposition: attachment; filename=table.html\n\n"
+                        "<table><tr><td>attachment</td></tr></table>\n--test--\n")
+               .empty(),
+        "HTML attachments should not replace the existing stored body");
+}
+
 void expect_parse_error(std::string_view raw, std::string_view reason) {
     const auto result = mailai::parse_message(raw);
     expect(!result, "invalid MIME message should fail");
@@ -167,7 +287,7 @@ std::string multipart_message(std::size_t total_parts) {
     return raw;
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     const char* current_sample = "plain_utf8.eml";
@@ -210,6 +330,24 @@ int main() {
             "<tr><td><p>C</p></td><td><p>D</p></td></tr>"
             "<tr><td>E</td><td></td></tr><tr><td></td><td>F</td></tr></table>",
             "A\tB\nC\tD\nE\t\n\tF\n");
+
+        current_sample = "structured HTML alternative with row and column spans";
+        expect_structured_table_alternative();
+
+        current_sample = "nested table with mixed text";
+        expect_nested_table_and_mixed_text();
+
+        current_sample = "bounded table spans";
+        expect_bounded_table_spans();
+
+        current_sample = "combined row and column spans";
+        expect_shared_table_spans();
+
+        current_sample = "overwide table fallback";
+        expect_overwide_table_text_fallback();
+
+        current_sample = "structured body fallback";
+        expect_body_blocks_fallback();
 
         current_sample = "HTML hidden subtrees and useful fallback text";
         expect_html_text(

@@ -11,6 +11,8 @@
 #include "sqlite_sync.h"
 #include "sqlite_utils.h"
 
+#include "mailai/error_message.h"
+
 namespace mailai {
 using store_detail::SqlContext;
 using store_detail::SqlRow;
@@ -29,7 +31,7 @@ struct PendingCollector {
         if (!decoded) return decoded;
         if (!validity && !uid) return {};
         if (!validity || !uid || *validity == 0 || *uid == 0)
-            return row.fail("Invalid stored pending job");
+            return row.fail(error_message::storage::invalid_pending_job);
 
         jobs.emplace_back(account_id, std::string{folder}, *validity, *uid);
         return {};
@@ -93,7 +95,43 @@ Status register_pending(
     });
     return context.execute_many(save_job_sql, {account_id, folder, validity}, rows);
 }
-}  // 匿名命名空间
+
+Status register_history(const SqlContext& context,
+    const AccountId& account_id,
+    std::string_view folder,
+    std::uint32_t validity,
+    std::span<const std::uint32_t> candidates,
+    std::size_t limit) {
+    if (candidates.empty() || limit == 0)
+        return {};
+
+    // 不占用历史补收名额的 UID 包括已经缓存的邮件，以及所有已登记的任务（含停止重试的任务）。
+    constexpr const char* known_sql = R"sql(
+        SELECT uid FROM messages
+        WHERE account_id = ?1 AND folder = ?2 AND uid_validity = ?3 AND uid <= ?4
+        UNION
+        SELECT uid FROM sync_pending
+        WHERE account_id = ?1 AND folder = ?2 AND uid_validity = ?3 AND uid <= ?4
+        ORDER BY uid
+    )sql";
+    auto known = context.query_all(known_sql,
+        {account_id, folder, validity, candidates.back()},
+        store_detail::decode_scalar<std::uint32_t>);
+    if (!known)
+        return std::unexpected(known.error());
+
+    std::vector<std::uint32_t> selected;
+    selected.reserve(std::min(limit, candidates.size()));
+    for (const auto uid : candidates | std::views::reverse) {
+        if (std::ranges::binary_search(*known, uid))
+            continue;
+        selected.push_back(uid);
+        if (selected.size() == limit)
+            break;
+    }
+    return register_pending(context, account_id, folder, validity, selected);
+}
+}  // namespace
 
 namespace store_detail {
 Result<SyncState> load_sync_state(
@@ -109,16 +147,16 @@ Result<SyncState> load_sync_state(
 
     auto found = context.query_one(sql, {account_id, folder}, decode_sync_state);
     if (!found)  return std::unexpected(found.error());
-    if (!*found) return context.fail(ErrorCode::unknown_account, "Unknown account");
+    if (!*found) return context.fail(ErrorCode::unknown_account, error_message::common::unknown_account);
 
     return std::move(**found);
 }
-}  // 命名空间 store_detail
+}  // namespace store_detail
 
 Result<SyncState> SqliteStore::state(const AccountId& account_id, std::string_view folder) {
     const SqlContext context{db_, "storage.state", account_id};
     if (account_id.empty() || folder.empty()) {
-        return context.fail(ErrorCode::invalid_argument, "Account and folder must not be empty");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::account_folder_required);
     }
     return store_detail::load_sync_state(context, account_id, folder);
 }
@@ -126,7 +164,7 @@ Result<SyncState> SqliteStore::state(const AccountId& account_id, std::string_vi
 Result<std::vector<RemoteKey>> SqliteStore::pending(const AccountId& account_id, std::string_view folder) {
     const SqlContext context{db_, "storage.pending", account_id};
     if (account_id.empty() || folder.empty()) {
-        return context.fail(ErrorCode::invalid_argument, "Account and folder must not be empty");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::account_folder_required);
     }
 
     constexpr const char* sql = R"sql(    
@@ -146,18 +184,22 @@ Result<std::vector<RemoteKey>> SqliteStore::pending(const AccountId& account_id,
     std::vector<RemoteKey> result;
     auto rows = context.scan(sql, {account_id, folder}, PendingCollector{account_id, folder, result});
     if (!rows)  return std::unexpected(rows.error());
-    if (!*rows) return context.fail(ErrorCode::unknown_account, "Unknown account");
+    if (!*rows) return context.fail(ErrorCode::unknown_account, error_message::common::unknown_account);
 
     return result;
 }
 
-Status SqliteStore::schedule(const AccountId& account_id, std::string_view folder, const MailboxSnapshot& snapshot, std::size_t initial_limit) {
+Status SqliteStore::schedule(const AccountId& account_id,
+    std::string_view folder,
+    const MailboxSnapshot& snapshot,
+    std::size_t initial_limit,
+    std::size_t history_limit) {
     const SqlContext context{db_, "storage.schedule", account_id};
     if (account_id.empty() || folder.empty() || snapshot.uid_validity == 0 || initial_limit == 0) {
-        return context.fail(ErrorCode::invalid_argument, "Invalid discovery settings");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::invalid_discovery_settings);
     }
     if (std::find(snapshot.uids.begin(), snapshot.uids.end(), 0) != snapshot.uids.end()) {
-        return context.fail(ErrorCode::invalid_argument, "Messages UIDs must not be zero");
+        return context.fail(ErrorCode::invalid_argument, error_message::storage::zero_uid);
     }
 
     auto uids = snapshot.uids;
@@ -191,7 +233,12 @@ Status SqliteStore::schedule(const AccountId& account_id, std::string_view folde
     auto registered = register_pending(context, account_id, folder, snapshot.uid_validity, {first, uids.end()});
     if (!registered) return registered;
 
+    auto history = register_history(
+        context, account_id, folder, snapshot.uid_validity, {uids.begin(), first}, history_limit);
+    if (!history)
+        return history;
+
     return context.commit(*transaction);
 }
 
-}  // 命名空间 mailai
+}  // namespace mailai

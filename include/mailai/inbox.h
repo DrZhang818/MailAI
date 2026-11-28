@@ -11,6 +11,7 @@ namespace mailai {
 
 struct InboxQuery {
     std::optional<AccountId> account_id;
+    std::optional<std::string> keyword{};
 };
 
 struct InboxItem {
@@ -24,9 +25,9 @@ struct InboxItem {
     bool historical{false};
 };
 
-Result<std::vector<InboxItem>> list_inbox(const std::vector<Account>& accounts,
-                                          const std::vector<Mail>& mails, const InboxQuery& query);
+Result<std::vector<InboxItem>> list_inbox(
+    const std::vector<Account>& accounts, const std::vector<Mail>& mails, const InboxQuery& query);
 
 Result<Mail> find_mail(const std::vector<Mail>& mails, MailId id);
 
-}  // 命名空间 mailai
+}  // namespace mailai

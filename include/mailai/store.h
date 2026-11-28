@@ -31,15 +31,23 @@ public:
 
     Status ensure_account(const Account& account, const ImapSettings& imap);
 
+    Status check_account_identity(const Account& account, const ImapSettings& imap);
+
     Result<std::vector<InboxItem>> list(const InboxQuery& query);
 
     Result<Mail> find(MailId id);
+
+    Result<std::string> read_raw(MailId id);
 
     Result<SyncState> state(const AccountId& account_id, std::string_view folder);
 
     Result<std::vector<RemoteKey>> pending(const AccountId& account_id, std::string_view folder);
 
-    Status schedule(const AccountId& account_id, std::string_view folder, const MailboxSnapshot& snapshot, std::size_t initial_limit);
+    Status schedule(const AccountId& account_id,
+        std::string_view folder,
+        const MailboxSnapshot& snapshot,
+        std::size_t initial_limit,
+        std::size_t history_limit = 0);
 
     // 返回 ID 表示持久化成功，包括解析失败但已保存的情况。
     // 只有解析和持久化均成功时，才将邮件计为同步成功。
@@ -55,4 +63,4 @@ private:
     sqlite3* db_{nullptr};
 };
 
-}  // 命名空间 mailai
+}  // namespace mailai

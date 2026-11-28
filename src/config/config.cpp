@@ -1,14 +1,17 @@
 #include "mailai/config.h"
 
 #include <charconv>
+#include <cstdlib>
 #include <system_error>
+
+#include "mailai/error_message.h"
 
 namespace mailai {
 
 namespace {
 
-std::string config_value(const Environment& env, const std::string& name,
-                         const std::string& fallback = {}) {
+std::string config_value(
+    const Environment& env, const std::string& name, const std::string& fallback = {}) {
     const auto it = env.find(name);
     if (it != env.end() && !it->second.empty()) {
         return it->second;
@@ -25,7 +28,29 @@ Error make_config_error(const std::string& message) {
     };
 }
 
-}  // 匿名命名空间
+}  // namespace
+
+Environment read_runtime_environment() {
+    Environment env;
+    for (const char* name :
+        {"MAILAI_DATA_DIR",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "HOME",
+            "MAILAI_EMAIL",
+            "MAILAI_IMAP_HOST",
+            "MAILAI_IMAP_USER",
+            "MAILAI_ACCOUNT_ID",
+            "MAILAI_ACCOUNT_NAME",
+            "MAILAI_PASSWORD_ENV",
+            "MAILAI_IMAP_TLS",
+            "MAILAI_IMAP_PORT",
+            "MAILAI_IMAP_CA_FILE"}) {
+        if (const char* value = std::getenv(name))
+            env.emplace(name, value);
+    }
+    return env;
+}
 
 Result<std::filesystem::path> resolve_data_dir(const Environment& env) {
     if (const auto it = env.find("MAILAI_DATA_DIR"); it != env.end() && !it->second.empty()) {
@@ -40,15 +65,16 @@ Result<std::filesystem::path> resolve_data_dir(const Environment& env) {
     if (const auto it = env.find("HOME"); it != env.end() && !it->second.empty()) {
         return std::filesystem::path(it->second) / ".local" / "share" / "mail-ai-assistant";
     }
-    return std::unexpected(Error{ErrorCode::config_error, "Cannot determine data directory",
-                                 std::nullopt, std::nullopt});
+    return std::unexpected(Error{
+        ErrorCode::config_error, error_message::config::data_dir_missing, std::nullopt, std::nullopt
+    });
 }
 
 Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     for (const char* name : {"MAILAI_EMAIL", "MAILAI_IMAP_HOST", "MAILAI_IMAP_USER"}) {
         if (config_value(env, name).empty()) {
             return std::unexpected(
-                make_config_error("Missing required setting: " + std::string(name)));
+                make_config_error(error_message::config::required_setting + std::string(name)));
         }
     }
 
@@ -73,6 +99,10 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
     config.imap.username = config_value(env, "MAILAI_IMAP_USER");
 
     config.imap.credential_env = config_value(env, "MAILAI_PASSWORD_ENV", "MAILAI_IMAP_PASSWORD");
+    if (!valid_credential_reference(config.imap.credential_env)) {
+        return std::unexpected(
+            make_config_error(error_message::config::invalid_credential_reference));
+    }
 
     auto tls = config_value(env, "MAILAI_IMAP_TLS", "implicit");
 
@@ -80,7 +110,7 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
         config.imap.tls_mode = TlsMode::starttls;
         config.imap.port = 143;
     } else if (tls != "implicit") {
-        return std::unexpected(make_config_error("MAILAI_IMAP_TLS must be implicit or starttls"));
+        return std::unexpected(make_config_error(error_message::config::invalid_tls));
     }
 
     const auto port_text = config_value(env, "MAILAI_IMAP_PORT");
@@ -93,14 +123,17 @@ Result<RuntimeConfig> parse_sync_config(const Environment& env) {
 
         const auto [ptr, ec] = std::from_chars(begin, end, port);
         if (ec != std::errc{} || ptr != end || port == 0 || port > 65535) {
-            return std::unexpected(
-                make_config_error("MAILAI_IMAP_PORT must be a decimal integer from 1 to 65535"));
+            return std::unexpected(make_config_error(error_message::config::invalid_port));
         }
 
         config.imap.port = static_cast<std::uint16_t>(port);
     }
 
+    const auto ca_file = config_value(env, "MAILAI_IMAP_CA_FILE");
+    if (!ca_file.empty())
+        config.imap.ca_file = std::filesystem::path{ca_file};
+
     return config;
 }
 
-}  // 命名空间 mailai
+}  // namespace mailai

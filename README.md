@@ -1,22 +1,26 @@
 # MailAI
 
-MailAI is a C++23 command-line mail assistant in development. Its current
-executable demonstrates browsing a small, in-memory set of fictional emails.
-The core library also supports incremental IMAP synchronization, MIME parsing,
-and SQLite storage. These capabilities are not yet connected to the command line.
+MailAI is a C++23 command-line mail assistant in development. It supports
+incremental IMAP synchronization, MIME parsing, SQLite storage, and offline
+mail browsing. A separate demo mode provides fictional emails for exploration.
 
 ## Current status
 
 The CLI can:
 
-- List sample messages from all accounts or filter them by account.
-- Sort messages by receive time, newest first, with the mail ID as a tie-breaker.
-- Show a sample message by its ID.
+- Sign in interactively on macOS and remember mailbox settings and the cache
+  location across terminal sessions. Save the password in macOS Keychain.
+- Synchronize the configured INBOX into the local SQLite cache.
+- List cached messages or filter them by account without connecting to IMAP.
+- Display messages by ascending stable local ID and search cached sender,
+  subject, and body text.
+- Show a message by its stable local ID, including attachments and parsing status.
+- Browse the original fictional messages using `--demo`.
 - Report invalid arguments, unknown accounts, and missing messages.
 
 The sample accounts, `school` and `qq`, do not connect to real mailboxes. The
-CLI labels successful message output as sample data and currently prints its
-message content and most diagnostics in Chinese.
+CLI labels output with its data source, displays mail content in its original
+language, and reports errors in English.
 
 The core library provides environment-based configuration parsing and a SQLite
 store for accounts, messages, attachments, and synchronization state. The store
@@ -27,9 +31,11 @@ snapshot, schedules the newest 20 messages on the first synchronization or
 after a UIDVALIDITY change, and processes new and pending messages in UID order.
 Successful messages are not downloaded again; failures can be retried and
 unfinished work survives a restart. The IMAP client uses read-only fetching.
-A move-only data-directory write lock is available through the core library,
-with bounded waits and automatic release. CLI integration and real-mailbox
-verification are still planned, as are AI features and replies.
+Explicit history backfill can schedule a limited number of older uncached
+messages or all remaining messages in the current INBOX.
+A move-only data-directory write lock protects synchronization, with bounded
+waits and automatic release. Initial real-mailbox receipt has been verified;
+final live acceptance, AI features, and replies are still planned.
 
 ## Build from source
 
@@ -104,8 +110,107 @@ previously tested versions and platform details.
 ./build/debug/mail_assistant --help
 ./build/debug/mail_assistant inbox
 ./build/debug/mail_assistant inbox --account school
-./build/debug/mail_assistant show 43
+./build/debug/mail_assistant --demo inbox
+./build/debug/mail_assistant --demo show 43
+./build/debug/mail_assistant --demo find "面试"
 ```
+
+By default, `inbox`, `find`, and `show` read the local cache without requiring a password
+or a network connection. An absent cache is an empty inbox, not sample data.
+Use an ID displayed by `inbox` with `show`. Demo mode cannot run `sync`.
+
+The inbox is rendered as a column-aligned terminal table, including Chinese
+text. Long subjects wrap across lines without being truncated; sender
+addresses may be shortened when space is limited. Use `show` for the
+complete mail and timestamp. HTML body tables are recovered from the locally
+stored original message and rendered as text tables. Images are not drawn or
+downloaded from remote URLs; embedded image data remains in the original MIME.
+Interactive terminals use colored headers and
+dividers; set `NO_COLOR` to disable color. Historical mail is labeled only
+when it belongs to a retired UIDVALIDITY range; it remains available locally.
+
+### Interactive login on macOS
+
+```sh
+./build/debug/mail_assistant login
+./build/debug/mail_assistant sync
+./build/debug/mail_assistant inbox
+```
+
+Enter the mailbox address, IMAP server and client-specific password. Press
+Enter to accept the displayed defaults for username, TLS, port and cache
+directory. For an existing cache, choose its existing data directory.
+The password prompt does not echo the input. Login verifies IMAP access over
+TLS before saving settings; it does not download mail or change read status.
+
+New mail cache directories are created with owner-only permissions (0700).
+Before writing, `sync` protects `cache.sqlite3` and any existing SQLite
+journal, WAL and shared-memory files with mode 0600. An existing directory is
+not automatically chmodded: it must be owned by the current user and not be
+writable by other users. Existing caches receive file-permission protection
+the next time `sync` runs; read-only commands do not change permissions.
+
+The profile is saved in `$XDG_CONFIG_HOME/mail-ai-assistant/login.conf` when
+the XDG path is absolute, otherwise in
+`$HOME/.config/mail-ai-assistant/login.conf`. Only nonsecret settings are
+saved there (directory mode 0700, file mode 0600). The password is stored
+in macOS Keychain using the Security framework, not in this file, the
+database, or the shell command line. macOS may ask for permission to use
+the saved credential. Restarting the terminal does not require another login.
+
+```sh
+./build/debug/mail_assistant logout
+```
+
+Logout removes the saved Keychain credential but retains nonsecret mailbox
+settings and all cached mail. Read-only commands continue to work offline.
+Run `login` again to resume synchronization. Linux interactive login is
+not implemented yet.
+
+### Explicit environment configuration
+
+Environment-based configuration remains available for scripts and tests.
+If any of the three mailbox identity variables below is explicitly set,
+`sync` requires the complete environment configuration instead of combining
+it with remembered credentials. Use a fresh terminal without those variables
+to use the remembered login. An explicit `MAILAI_DATA_DIR` overrides the
+remembered cache path. Logout does not remove credentials supplied separately
+by environment variables.
+
+To configure synchronization manually, set the following environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `MAILAI_EMAIL`, `MAILAI_IMAP_HOST`, `MAILAI_IMAP_USER` | Required mailbox address, IMAP host, and username |
+| `MAILAI_ACCOUNT_ID`, `MAILAI_ACCOUNT_NAME` | Optional local account ID and display name; default to `school` and `学校邮箱` |
+| `MAILAI_IMAP_TLS`, `MAILAI_IMAP_PORT` | Optional TLS mode (`implicit` or `starttls`) and port; default to implicit TLS on 993, or 143 for STARTTLS |
+| `MAILAI_PASSWORD_ENV` | Name of the environment variable containing the password; default `MAILAI_IMAP_PASSWORD` |
+| `MAILAI_IMAP_CA_FILE` | Optional CA certificate file for a server using a custom CA; certificate and hostname verification remain enabled |
+| `MAILAI_DATA_DIR` | Optional data directory override |
+
+Keep the password in the referenced environment variable, not in the
+configuration, shell history, or repository. The data directory is selected
+from `MAILAI_DATA_DIR`, an absolute `XDG_DATA_HOME` with the
+`mail-ai-assistant` suffix, or `$HOME/.local/share/mail-ai-assistant`.
+The database is named `cache.sqlite3`.
+
+After configuring your own mailbox, use:
+
+```sh
+./build/debug/mail_assistant sync
+./build/debug/mail_assistant sync --history 50
+./build/debug/mail_assistant sync --all
+./build/debug/mail_assistant inbox
+./build/debug/mail_assistant find "课程"
+```
+
+Ordinary `sync` initially downloads the newest 20 messages, then processes
+new messages and retries unfinished work. Use `--history N` to also backfill
+up to N more recent uncached older messages, or `--all` to backfill the
+entire current INBOX. Already cached messages and pending jobs do not consume
+the history quota. These explicit options may download large amounts of mail.
+`find` performs literal substring matching across cached sender, subject,
+and body (ASCII letters are case-insensitive); it does not search the server.
 
 `inbox --account all` is equivalent to `inbox`. The `show` argument is the
 message ID, not a row number. It must be a positive decimal integer in the
@@ -116,6 +221,33 @@ unsigned 64-bit range. Successful output goes to stdout; errors go to stderr.
 | 0 | Success, including help or an empty result |
 | 1 | Query or execution failure |
 | 2 | Invalid command-line arguments |
+| 3 | Partial synchronization success |
+
+## Verify a live mailbox
+
+For the first real connection, build the opt-in probe and run it with your
+configured mailbox:
+
+```sh
+cmake --build build/debug --target imap_live_probe
+MAILAI_LIVE_TESTS=1 ./build/debug/imap_live_probe
+```
+
+The probe checks TLS, authentication, the INBOX snapshot, and at most the five
+newest messages. It prints only counts and diagnostics, does not open the
+SQLite cache, and does not change the server's read flags. It is excluded from
+the default build and CTest; running it without the explicit opt-in does not
+connect to the mailbox. Use a client-specific password provided by your mail
+service, enter it locally without echoing it, and never put it in a command's
+arguments or a tracked file.
+
+After a successful probe, choose a private data directory outside the
+repository and run `sync`, `inbox`, and `show <id>`. Repeat `sync` and verify
+the original local IDs and record count remain stable when no new mail has
+arrived. Remove the password from the environment, disconnect the network, and
+repeat the cache queries. Check read flags in the webmail client before and
+after downloading. Record only counts and pass/fail outcomes, not personal
+email addresses, subjects, bodies, attachment names or credentials.
 
 ## Run the tests
 
@@ -146,10 +278,33 @@ attempt uses a new connection, and downloads recheck UIDVALIDITY before
 fetching. The `sync` test combines a controlled mail source with real SQLite
 storage and MIME parsing to check incremental discovery, failure recovery,
 interruption and restart, UIDVALIDITY changes, and storage failures.
+The `cli_integration` test runs the actual executable against a loopback TLS
+fixture and temporary cache, checking synchronization, offline browsing,
+partial success, duplicate-free recovery, write-lock contention, and CLI
+validation without connecting to a real mailbox. On macOS it also drives
+the login command in a pseudo-terminal to verify that the password is
+not echoed and invalid authentication does not save credentials.
+The `login_profile`, `login_service`, and `credential_store` tests verify
+private profile persistence, credential rollback, retained cache selection,
+account isolation and Keychain API behavior with simulated system calls.
 On macOS with Homebrew libcurl 8.23.0, Debug and Release each passed all
-20 tests. libcurl 8.17.0 is required for custom FETCH
+24 tests. libcurl 8.17.0 is required for custom FETCH
 literal handling; older versions are not supported.
 This version has not been tested on Linux.
+
+## Source layout
+
+The executable entry point is `src/main.cpp`, while implementation files are
+grouped by responsibility:
+
+- `src/cli/`: command-line arguments, login prompts, and terminal output.
+- `src/app/`: business services and synchronization orchestration.
+- `src/config/`: runtime configuration, remembered login profiles, and Keychain access.
+- `src/mail/`: IMAP transport and protocol parsing, MIME parsing.
+- `src/store/`: SQLite persistence and data-directory locking.
+
+Public core-library headers remain in `include/mailai/`. Internal headers
+stay beside their implementations.
 
 ## Storage notes
 
@@ -175,8 +330,8 @@ job within one transaction. Discovery similarly groups mailbox-range changes,
 the discovery cursor, and new jobs. Shared sync-state reads use the calling
 operation's error context.
 
-`SqliteStore` is available through the core library but is not used by the
-current executable. Its schema validation accepts the project's known version 1
+`SqliteStore` is used by the runtime services for local cache queries and
+synchronization. Its schema validation accepts the project's known version 1
 DDL, including the account-table formatting shipped in commit `d0c9410`.
 Both layouts open with their existing schema and data. Other SQL formatting
 may be rejected. See the

@@ -16,6 +16,7 @@ struct MailSource {
 Result<SyncSummary> sync_inbox(SqliteStore& store,
     const RuntimeConfig& config,
     const MailSource& source,
-    std::int64_t attempted_at);
+    std::int64_t attempted_at,
+    std::size_t history_limit = 0);
 
-}  // 命名空间 mailai::sync_detail
+}  // namespace mailai::sync_detail

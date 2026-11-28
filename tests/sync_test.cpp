@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -175,6 +176,85 @@ void test_initial_limit_and_incremental_recovery() {
     expect(state && state->last_discovered_uid == 27 && state->last_attempt_at == 30 &&
                state->last_success_at == 30,
         "a successful no-op sync should refresh both timestamps");
+}
+
+void test_history_backfill_keeps_incremental_sync_and_retries() {
+    TempDirectory directory;
+    const auto path = directory.path() / "history.sqlite3";
+    auto store = open_store(path);
+    Database db(path);
+    ScriptedSource mail;
+    for (std::uint32_t uid = 25; uid > 0; --uid) mail.snapshot.uids.push_back(uid);
+    mail.snapshot.uids.push_back(5);
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 10), 20, 20, 0);
+    const auto saved_id = db.integer("SELECT id FROM messages WHERE uid=6");
+
+    mail.snapshot.uids.push_back(26);
+    mail.failures.emplace(5, network_failure());
+    mail.failures.emplace(4, network_failure(ErrorCode::remote_gone));
+    mail.requested.clear();
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 20, 2), 3, 1, 2);
+    expect(mail.requested == std::vector<std::uint32_t>{4, 5, 26},
+        "history should fetch the newest missing older mail in addition to new arrivals");
+    expect_pending(store, {5});
+
+    mail.failures.clear();
+    mail.requested.clear();
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 30, 2), 2, 3, 0);
+    expect(mail.requested == std::vector<std::uint32_t>{2, 3, 5},
+        "already pending or retired UIDs must not consume the history limit or be rescheduled");
+    expect_pending(store, {});
+
+    mail.requested.clear();
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 40), 0, 0, 0);
+    expect(mail.requested.empty(), "ordinary sync must still leave unrequested history alone");
+
+    const auto all = std::numeric_limits<std::size_t>::max();
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 50, all), 1, 1, 0);
+    expect(mail.requested == std::vector<std::uint32_t>{1}, "all should fetch remaining history");
+    mail.requested.clear();
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 60, all), 0, 0, 0);
+    expect(mail.requested.empty() && db.integer("SELECT count(*) FROM messages") == 25 &&
+               db.integer("SELECT id FROM messages WHERE uid=6") == saved_id,
+        "repeating all must not download cached mail or change stable local IDs");
+    const auto state = store.state("school", "INBOX");
+    expect(state && state->last_discovered_uid == 26 && state->last_success_at == 60,
+        "history backfill must not rewind incremental discovery");
+}
+
+void test_history_backfill_on_first_sync_and_reindex() {
+    TempDirectory directory;
+    const auto path = directory.path() / "history-reindex.sqlite3";
+    auto store = open_store(path);
+    Database db(path);
+    ScriptedSource mail;
+    for (std::uint32_t uid = 25; uid > 0; --uid) mail.snapshot.uids.push_back(uid);
+    mail.failures.emplace(4, network_failure());
+    expect_summary(sync_detail::sync_inbox(store, config(), mail.source(), 10, 2), 22, 21, 1);
+    expect(
+        mail.requested.size() == 22 && mail.requested.front() == 4 && mail.requested.back() == 25,
+        "first history sync should extend the ordinary initial range by the requested count");
+    expect_pending(store, {4});
+
+    mail.snapshot.uid_validity = 78;
+    mail.failures.clear();
+    mail.requested.clear();
+    expect_summary(sync_detail::sync_inbox(
+                       store, config(), mail.source(), 20, std::numeric_limits<std::size_t>::max()),
+        25,
+        25,
+        0,
+        true);
+    expect(
+        mail.requested.size() == 25 && mail.requested.front() == 1 && mail.requested.back() == 25,
+        "all on a new UIDVALIDITY must not skip UIDs cached under the previous identity");
+    expect_pending(store, {});
+    expect(
+        db.integer("SELECT count(*) FROM messages WHERE historical=1 AND uid_validity=77") == 21 &&
+            db.integer("SELECT count(*) FROM messages WHERE historical=0 AND uid_validity=78") ==
+                25 &&
+            db.integer("SELECT count(*) FROM sync_pending WHERE uid_validity=77") == 0,
+        "reindex must retain old mail history and retire old failures");
 }
 
 void test_uidvalidity_change_retires_old_range() {
@@ -404,11 +484,13 @@ void test_source_key_mismatch_and_outcome_failure() {
         mail.requested.empty(), "committed messages must not be downloaded after outcome failure");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {
         test_initial_limit_and_incremental_recovery();
+        test_history_backfill_keeps_incremental_sync_and_retries();
+        test_history_backfill_on_first_sync_and_reindex();
         test_uidvalidity_change_retires_old_range();
         test_disappeared_mail_preserves_local_record();
         test_resume_after_interruption(false);

@@ -163,7 +163,7 @@ void test_invalid_mail_id() {
     expect(error.code == ErrorCode::invalid_argument, "invalid mail id");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

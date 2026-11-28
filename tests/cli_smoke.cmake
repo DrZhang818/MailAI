@@ -5,7 +5,7 @@ if(NOT DEFINED MAIL_ASSISTANT)
 endif()
 
 execute_process(
-    COMMAND "${MAIL_ASSISTANT}" inbox
+    COMMAND "${MAIL_ASSISTANT}" --demo inbox
     RESULT_VARIABLE smoke_exit_code
     OUTPUT_VARIABLE smoke_stdout
     ERROR_VARIABLE smoke_stderr

@@ -5,6 +5,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "mailai/error_message.h"
+
 namespace mailai::store_detail {
 
 Error sqlite_error(sqlite3* db, int rc, std::string_view stage) {
@@ -24,18 +26,18 @@ Result<SqlContext::Statement> SqlContext::_prepare(
     std::string_view sql, std::initializer_list<SqlValue> values, BindMode bind_mode
 ) const {
     if (sql.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        return fail(ErrorCode::storage_error, "SQL statement exceeds SQLite size limit");
+        return fail(ErrorCode::storage_error, error_message::storage::statement_too_large);
 
     sqlite3_stmt* raw = nullptr;
     const int rc = sqlite3_prepare_v2(db_, sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
     Statement statement{raw, &sqlite3_finalize};
     if (rc != SQLITE_OK) return fail(sqlite_error(db_, rc, stage_));
-    if (!statement) return fail(ErrorCode::storage_error, "SQL statement is empty");
+    if (!statement) return fail(ErrorCode::storage_error, error_message::storage::empty_statement);
 
     const auto parameter_count = static_cast<std::size_t>(sqlite3_bind_parameter_count(raw));
     if (values.size() > parameter_count ||
         (bind_mode == BindMode::complete && values.size() != parameter_count)) {
-        return fail(ErrorCode::storage_error, "Values do not match SQL parameter count");
+        return fail(ErrorCode::storage_error, error_message::storage::parameter_count_mismatch);
     }
 
     auto bound = _bind(statement, 1, {values.begin(), values.size()});
@@ -54,7 +56,7 @@ Status Transaction::_execute(sqlite3* db, const char* sql) {
 Result<std::int64_t> SqlContext::query_integer(std::string_view sql) const {
     auto value = query_one(sql, {}, decode_scalar<std::int64_t>);
     if (!value) return std::unexpected(value.error());
-    if (!*value) return fail(ErrorCode::storage_error, "Expected one integer result");
+    if (!*value) return fail(ErrorCode::storage_error, error_message::storage::expected_integer_result);
 
     return **value;
 }
@@ -73,7 +75,7 @@ Status configure_connection(sqlite3* db) {
     auto value = context.query_integer("PRAGMA foreign_keys");
     if (!value) return std::unexpected(value.error());
     if (*value != 1)
-        return context.fail(ErrorCode::storage_error, "SQLite foreign keys could not be enabled");
+        return context.fail(ErrorCode::storage_error, error_message::storage::foreign_keys_failed);
 
     return {};
 }
@@ -86,8 +88,8 @@ Status configure_wal(sqlite3* db) {
     const SqlContext context{db, "storage.configure"};
     auto value = context.query_one("PRAGMA main.journal_mode=WAL", {}, decode_scalar<std::string>);
     if (!value) return std::unexpected(value.error());
-    if (!*value) return context.fail(ErrorCode::storage_error, "SQLite did not return a journal mode");
-    if (**value != "wal") return context.fail(ErrorCode::storage_error, "SQLite WAL mode could not be enabled");
+    if (!*value) return context.fail(ErrorCode::storage_error, error_message::storage::missing_journal_mode);
+    if (**value != "wal") return context.fail(ErrorCode::storage_error, error_message::storage::wal_failed);
 
     return {};
 }
@@ -124,7 +126,7 @@ std::unexpected<Error> SqlRow::fail(std::string_view message) const {
 
 Status SqlRow::column(int index, std::int64_t& value) const {
     if (sqlite3_column_type(statement_, index) != SQLITE_INTEGER)
-        return fail("Expected an INTEGER SQL value at column " + std::to_string(index));
+        return fail(error_message::storage::expected_integer_column + std::to_string(index));
 
     value = sqlite3_column_int64(statement_, index);
     return {};
@@ -134,7 +136,7 @@ Status SqlRow::column(int index, std::uint64_t& value) const {
     std::int64_t integer{};
     auto decoded = column(index, integer);
     if (!decoded) return decoded;
-    if (integer < 0) return fail("Expected a nonnegative SQL integer at column " + std::to_string(index));
+    if (integer < 0) return fail(error_message::storage::expected_nonnegative_column + std::to_string(index));
 
     value = static_cast<std::uint64_t>(integer);
     return {};
@@ -145,7 +147,7 @@ Status SqlRow::column(int index, std::uint32_t& value) const {
     auto decoded = column(index, integer);
     if (!decoded) return decoded;
     if (integer > std::numeric_limits<std::uint32_t>::max())
-        return fail("SQL integer exceeds the UID range at column " + std::to_string(index));
+        return fail(error_message::storage::uid_range_exceeded + std::to_string(index));
 
     value = static_cast<std::uint32_t>(integer);
     return {};
@@ -155,7 +157,7 @@ Status SqlRow::column(int index, bool& value) const {
     std::int64_t integer{};
     auto decoded = column(index, integer);
     if (!decoded) return decoded;
-    if (integer != 0 && integer != 1) return fail("Expected a SQL boolean at column " + std::to_string(index));
+    if (integer != 0 && integer != 1) return fail(error_message::storage::expected_boolean_column + std::to_string(index));
 
     value = integer != 0;
     return {};
@@ -163,12 +165,26 @@ Status SqlRow::column(int index, bool& value) const {
 
 Status SqlRow::column(int index, std::string& value) const {
     if (sqlite3_column_type(statement_, index) != SQLITE_TEXT)
-        return fail("Expected a TEXT SQL value at column " + std::to_string(index));
+        return fail(error_message::storage::expected_text_column + std::to_string(index));
 
     const auto* text = sqlite3_column_text(statement_, index);
-    if (!text) return fail("Could not read a TEXT SQL value");
+    if (!text) return fail(error_message::storage::text_read_failed);
 
     value.assign(reinterpret_cast<const char*>(text), sqlite3_column_bytes(statement_, index));
+    return {};
+}
+
+Status SqlRow::column(int index, Blob& value) const {
+    if (sqlite3_column_type(statement_, index) != SQLITE_BLOB)
+        return fail(error_message::storage::expected_blob_column + std::to_string(index));
+    const auto* bytes = sqlite3_column_blob(statement_, index);
+    const auto size = sqlite3_column_bytes(statement_, index);
+    if (!bytes && size != 0)
+        return fail(error_message::storage::blob_read_failed);
+    if (size == 0)
+        value.bytes.clear();
+    else
+        value.bytes.assign(static_cast<const char*>(bytes), size);
     return {};
 }
 
@@ -236,7 +252,7 @@ Result<bool> SqlContext::_next(const Statement& statement) const {
 
 Status SqlContext::_finish(const Statement& statement) const {
     const int rc = sqlite3_step(statement.get());
-    if (rc == SQLITE_ROW) return fail(ErrorCode::storage_error, "Unexpected additional SQL result row");
+    if (rc == SQLITE_ROW) return fail(ErrorCode::storage_error, error_message::storage::unexpected_result_row);
     if (rc != SQLITE_DONE) return fail(sqlite_error(db_, rc, stage_));
     return {};
 }
@@ -276,4 +292,4 @@ int SqlContext::changes() const {
     return sqlite3_changes(db_);
 }
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail

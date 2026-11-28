@@ -31,7 +31,7 @@ void expect_protocol_error(std::string_view response) {
         "error should not include the raw response or a mail ID");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

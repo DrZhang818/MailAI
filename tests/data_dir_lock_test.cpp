@@ -219,7 +219,7 @@ void test_read_only_database_access_does_not_take_directory_lock() {
     expect(store.has_value() && store->list({}).has_value(),
         "holding the directory lock must not block existing read-only cache access");
 }
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

@@ -4,11 +4,15 @@
 
 ## macOS 本机验证
 
-macOS 27.2（Apple Silicon）、Apple Clang 21.0.0、CMake 4.4.5、Ninja 1.13.2、pkg-config 3.0.10；CMake 选用 Homebrew SQLite 3.54.1、libcurl 8.23.0、GMime 3.2.15、libxml2 2.15.4 和 libffi 3.8.0。Homebrew curl 的版本信息列出 IMAP、IMAPS 和 SSL；此检查不连接服务器。Python 3.14.10 和 OpenSSL 命令行 4.1.0 已安装。
+macOS 27.2.1（Apple Silicon）、Apple Clang 21.0.0、CMake 4.4.5、Ninja 1.13.2、pkg-config 3.0.10；CMake 选用 Homebrew SQLite 3.54.1、libcurl 8.23.0、GMime 3.2.15、libxml2 2.15.4 和 libffi 3.8.0。Homebrew curl 的版本信息列出 IMAP、IMAPS 和 SSL；此检查不连接服务器。Python 3.14.10 和 OpenSSL 命令行 4.1.0 已安装。
 
 本轮在受管理临时目录中按 README 的依赖选择方式独立构建 Debug 和 Release，两种模式各 11 项 CTest 全部通过，构建无警告。`store` 验证数据库生命周期、约束与失败恢复。`store_list`、`store_find` 使用真实临时 SQLite 验证列表筛选与排序、详情与附件、ID 边界、只读访问、数据保留和查询失败恢复。`store_sync` 验证同步状态与待办查询、任务登记、UIDVALIDITY 变化及事务回滚。`store_write` 验证邮件与附件保存、稳定 ID、解析失败后重试、远端消失后停止重试、同步结果记录、重开持久性及写入失败回滚。`sqlite_context` 验证共享 SQL 操作的参数复制、空值类型、语句复用、执行错误和事务失败恢复。`data_dir_lock` 验证跨进程争锁、默认与自定义超时、等待后取得、进程退出和移动后的释放、数据保留及持锁期间的只读缓存访问。写命令入口的取得锁调用由后续 CLI 接入任务实现。
 
-使用本机系统版本作为部署目标，程序未验证对较旧 macOS 的兼容性。新增写锁组件本轮尚未在 Linux 执行。邮件解析和真实收信仍由后续任务验收。
+Task 7 本机回归：Debug 与独立 Release 配置选用上述库，构建均无警告，默认 CTest 各 21/21 通过。另显式构建 `imap_live_probe`，其独立虚构 TLS 邮箱测试在两种构建下通过，验证启用门槛、最多五封、解析统计、不修改已读状态、不创建缓存及诊断脱敏。真实邮箱的验收结果单独记录在阶段进度中；该回归没有访问真实邮箱。
+
+macOS 登录记忆功能使用系统自带的 Security.framework 和 CoreFoundation.framework，无需安装额外 Homebrew 依赖。Debug／Release 构建均无警告，默认 CTest 各 24/24 通过。钥匙串组件测试模拟系统调用，真实伪终端与虚构 TLS 邮箱验证密码隐藏和认证失败处理，未访问真实钥匙串或真实邮箱。Linux 登录功能留待后续设计。
+
+使用本机系统版本作为部署目标，程序未验证对较旧 macOS 的兼容性。当前完整阶段代码尚未在 Linux 执行。
 
 ## 此前 WSL Ubuntu 验证
 

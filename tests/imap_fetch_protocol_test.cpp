@@ -5,7 +5,7 @@
 #include <string_view>
 
 #include "mail/imap_protocol.h"
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 #include "test_support.h"
 
 namespace {
@@ -121,7 +121,7 @@ void test_invalid_responses() {
     expect(!oversized.append_header("* 1 FETCH (UID 101 BODY[] {20971521}\r\n"),
         "Reject oversized literal");
     expect_error(oversized.finish(), ErrorCode::protocol_error);
-    expect(oversized.finish().error().message == mailai::error_messages::imap::fetch_too_large,
+    expect(oversized.finish().error().message == mailai::error_message::imap::fetch_too_large,
         "Size error should preserve its diagnostic");
 }
 
@@ -176,7 +176,7 @@ void test_error_precedence() {
     generic_protocol.code = ErrorCode::protocol_error;
     const auto temporary_failure = late_unavailable.finish(generic_protocol);
     expect_error(temporary_failure, ErrorCode::network_error);
-    expect(temporary_failure.error().message == mailai::error_messages::imap::service_unavailable,
+    expect(temporary_failure.error().message == mailai::error_message::imap::service_unavailable,
         "Explicit service response should take precedence over a generic transport error");
 
     FetchTransfer aborted(key);
@@ -192,7 +192,7 @@ void test_error_precedence() {
         "Ordinary diagnostic text is not a response code");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

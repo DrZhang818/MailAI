@@ -4,7 +4,7 @@
 #include <string_view>
 
 #include "mail/imap_protocol.h"
-#include "mailai/error_messages.h"
+#include "mailai/error_message.h"
 #include "test_support.h"
 
 namespace {
@@ -24,11 +24,11 @@ void expect_invalid_date(std::string_view date) {
     expect(error.code == mailai::ErrorCode::protocol_error, "Expected protocol_error");
     expect(error.account_id == account_id && error.stage == "imap.fetch",
         "Error should identify the account and stage");
-    expect(!error.mail_id && error.message == mailai::error_messages::imap::invalid_internal_date,
+    expect(!error.mail_id && error.message == mailai::error_message::imap::invalid_internal_date,
         "Error should use the fixed message without the raw response");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     try {

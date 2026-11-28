@@ -9,10 +9,12 @@ namespace {
 using namespace mailai;
 
 Environment valid_sync_environment() {
-    return {{"MAILAI_DATA_DIR", "/tmp/mailai-test/sync"},
-            {"MAILAI_EMAIL", "student@school.example"},
-            {"MAILAI_IMAP_HOST", "imap.school.example"},
-            {"MAILAI_IMAP_USER", "student"}};
+    return {
+        {"MAILAI_DATA_DIR", "/tmp/mailai-test/sync"},
+        {"MAILAI_EMAIL", "student@school.example"},
+        {"MAILAI_IMAP_HOST", "imap.school.example"},
+        {"MAILAI_IMAP_USER", "student"}
+    };
 }
 
 void test_valid_sync_config() {
@@ -25,18 +27,18 @@ void test_valid_sync_config() {
 
     expect(config.account.id == "school", "default account ID should be school");
     expect(config.account.display_name == "学校邮箱",
-           "default account name should be the school mailbox name");
+        "default account name should be the school mailbox name");
     expect(config.account.address == "student@school.example",
-           "account address should come from MAILAI_EMAIL");
-    expect(config.imap.host == "imap.school.example",
-           "IMAP host should come from MAILAI_IMAP_HOST");
+        "account address should come from MAILAI_EMAIL");
+    expect(
+        config.imap.host == "imap.school.example", "IMAP host should come from MAILAI_IMAP_HOST");
     expect(config.imap.username == "student", "IMAP username should come from MAILAI_IMAP_USER");
     expect(config.imap.tls_mode == TlsMode::implicit, "default TLS mode should be implicit");
     expect(config.imap.port == 993, "implicit TLS should default to port 993");
     expect(config.imap.credential_env == "MAILAI_IMAP_PASSWORD",
-           "config should store the default credential variable name");
+        "config should store the default credential variable name");
     expect(config.data_dir == std::filesystem::path{"/tmp/mailai-test/sync"},
-           "sync config should preserve the resolved data directory");
+        "sync config should preserve the resolved data directory");
 }
 
 void test_starttls_default_port() {
@@ -58,18 +60,21 @@ void test_custom_sync_config() {
     env["MAILAI_PASSWORD_ENV"] = "MAILAI_TEST_PASSWORD";
     env["MAILAI_IMAP_TLS"] = "starttls";
     env["MAILAI_IMAP_PORT"] = "1143";
+    env["MAILAI_IMAP_CA_FILE"] = "/tmp/mailai-fixture-ca.pem";
 
     const auto result = parse_sync_config(env);
     expect(result.has_value(), "custom sync config should be accepted without a password value");
 
     const auto& config = *result;
     expect(config.account.id == "campus", "explicit account ID should be preserved");
-    expect(config.account.display_name == "个人学校邮箱",
-           "explicit account name should be preserved");
+    expect(
+        config.account.display_name == "个人学校邮箱", "explicit account name should be preserved");
     expect(config.imap.credential_env == "MAILAI_TEST_PASSWORD",
-           "explicit credential variable name should be preserved");
+        "explicit credential variable name should be preserved");
     expect(config.imap.tls_mode == TlsMode::starttls, "explicit STARTTLS mode should be preserved");
     expect(config.imap.port == 1143, "explicit port should override the TLS default");
+    expect(config.imap.ca_file == std::filesystem::path{"/tmp/mailai-fixture-ca.pem"},
+        "explicit CA certificate path should be preserved");
 }
 
 void test_explicit_port_boundaries() {
@@ -86,7 +91,7 @@ void test_explicit_port_boundaries() {
         const auto result = parse_sync_config(env);
         expect(result.has_value(), "a port within the valid range should be accepted");
         expect(result->imap.port == test.expected,
-               "explicit boundary port should be preserved without narrowing errors");
+            "explicit boundary port should be preserved without narrowing errors");
     }
 }
 
@@ -104,6 +109,9 @@ void test_invalid_config() {
         {"MAILAI_IMAP_USER", nullptr, "missing IMAP username should be rejected"},
         {"MAILAI_IMAP_USER", "", "empty IMAP username should be rejected"},
         {"MAILAI_IMAP_TLS", "unknown", "unknown TLS mode should be rejected"},
+        {"MAILAI_PASSWORD_ENV",
+            "TEST_REF=fixture-only-value",
+            "credential assignment must not be accepted as a variable name"},
         {"MAILAI_IMAP_PORT", "0", "port zero should be rejected"},
         {"MAILAI_IMAP_PORT", "65536", "port above 65535 should be rejected"},
         {"MAILAI_IMAP_PORT", "-1", "negative port should be rejected"},
@@ -112,8 +120,10 @@ void test_invalid_config() {
         {"MAILAI_IMAP_PORT", " 993", "port with leading whitespace should be rejected"},
         {"MAILAI_IMAP_PORT", "993 ", "port with trailing whitespace should be rejected"},
         {"MAILAI_IMAP_PORT", "999999999999999999999999", "overflowing port should be rejected"},
-        {"MAILAI_DATA_DIR", nullptr,
-         "sync config without any data directory source should be rejected"}};
+        {"MAILAI_DATA_DIR",
+            nullptr,
+            "sync config without any data directory source should be rejected"}
+    };
 
     for (const auto& test : cases) {
         auto env = valid_sync_environment();
@@ -127,8 +137,10 @@ void test_invalid_config() {
         expect(!result.has_value(), test.message);
         const auto& error = result.error();
         expect(error.code == ErrorCode::config_error,
-               "invalid sync config should report config_error");
+            "invalid sync config should report config_error");
         expect(!error.message.empty(), "config errors should include a diagnostic");
+        expect(error.message.find("fixture-only-value") == std::string::npos,
+            "configuration diagnostics must not reveal a misplaced credential value");
     }
 }
 
@@ -144,44 +156,46 @@ void test_relative_xdg_data_home_is_ignored() {
     auto result = resolve_data_dir(env);
     expect(result.has_value(), "relative XDG_DATA_HOME should not prevent the HOME fallback");
     expect(*result == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
-           "relative XDG_DATA_HOME should be ignored in favor of HOME");
+        "relative XDG_DATA_HOME should be ignored in favor of HOME");
 
     env.erase("HOME");
     result = resolve_data_dir(env);
     expect(!result.has_value(), "relative XDG_DATA_HOME alone should not resolve a data directory");
     expect(result.error().code == ErrorCode::config_error,
-           "no usable data directory source should report config_error");
+        "no usable data directory source should report config_error");
 }
 
 void test_data_dir_precedence() {
-    Environment env{{"MAILAI_DATA_DIR", "/tmp/mailai-test/custom"},
-                    {"XDG_DATA_HOME", "/tmp/mailai-test/xdg"},
-                    {"HOME", "/tmp/mailai-test/home"}};
+    Environment env{
+        {"MAILAI_DATA_DIR", "/tmp/mailai-test/custom"},
+        {"XDG_DATA_HOME", "/tmp/mailai-test/xdg"},
+        {"HOME", "/tmp/mailai-test/home"}
+    };
 
     auto result = resolve_data_dir(env);
 
     expect(result.has_value(), "explicit data directory should be accepted");
 
     expect(*result == std::filesystem::path{"/tmp/mailai-test/custom"},
-           "explicit data directory should take precedence");
+        "explicit data directory should take precedence");
 
     env.erase("MAILAI_DATA_DIR");
     result = resolve_data_dir(env);
 
     expect(result.has_value(),
-           "XDG data directory should be accepted when no explicit directory is set");
+        "XDG data directory should be accepted when no explicit directory is set");
 
     expect(*result == std::filesystem::path{"/tmp/mailai-test/xdg/mail-ai-assistant"},
-           "data directory should be mail-ai-assistant under XDG_DATA_HOME");
+        "data directory should be mail-ai-assistant under XDG_DATA_HOME");
 
     env.erase("XDG_DATA_HOME");
     result = resolve_data_dir(env);
 
     expect(result.has_value(),
-           "HOME fallback should be accepted when no explicit or XDG directory is set");
+        "HOME fallback should be accepted when no explicit or XDG directory is set");
 
     expect(*result == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
-           "data directory should be .local/share/mail-ai-assistant under HOME");
+        "data directory should be .local/share/mail-ai-assistant under HOME");
 
     env.erase("HOME");
     result = resolve_data_dir(env);
@@ -189,25 +203,26 @@ void test_data_dir_precedence() {
     expect(!result.has_value(), "missing data directory sources should return an error");
 
     expect(result.error().code == ErrorCode::config_error,
-           "missing data directory sources should report config_error");
+        "missing data directory sources should report config_error");
 
-    env = {{"MAILAI_DATA_DIR", ""},
-           {"XDG_DATA_HOME", "/tmp/mailai-test/xdg"},
-           {"HOME", "/tmp/mailai-test/home"}};
+    env = {
+        {"MAILAI_DATA_DIR", ""},
+        {"XDG_DATA_HOME", "/tmp/mailai-test/xdg"},
+        {"HOME", "/tmp/mailai-test/home"}
+    };
     result = resolve_data_dir(env);
 
     expect(result.has_value(), "empty explicit directory should fall back to XDG");
 
     expect(*result == std::filesystem::path{"/tmp/mailai-test/xdg/mail-ai-assistant"},
-           "XDG data directory should be used when the explicit directory is empty");
+        "XDG data directory should be used when the explicit directory is empty");
 
     env["XDG_DATA_HOME"] = "";
     result = resolve_data_dir(env);
 
     expect(result.has_value(), "empty explicit and XDG directories should fall back to HOME");
 
-    expect(
-        *result == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
+    expect(*result == std::filesystem::path{"/tmp/mailai-test/home/.local/share/mail-ai-assistant"},
         "HOME default data directory should be used when explicit and XDG directories are empty");
 
     env["HOME"] = "";
@@ -216,10 +231,10 @@ void test_data_dir_precedence() {
     expect(!result.has_value(), "empty data directory sources should return an error");
 
     expect(result.error().code == ErrorCode::config_error,
-           "empty data directory sources should report config_error");
+        "empty data directory sources should report config_error");
 }
 
-}  // 匿名命名空间
+}  // namespace
 
 int main() {
     test_missing_data_dir_sources();

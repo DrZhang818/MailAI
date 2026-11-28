@@ -3,6 +3,8 @@
 #include <functional>
 #include <utility>
 
+#include "mailai/error_message.h"
+
 namespace mailai::store_detail {
 
 template <std::ranges::input_range Rows>
@@ -19,7 +21,7 @@ Status SqlContext::execute_many(
     for (const auto& values : rows) {
         const std::span<const SqlValue> parameters{values};
         if (parameters.size() != suffix_count)
-            return fail(ErrorCode::storage_error, "Batch row does not match SQL parameter count");
+            return fail(ErrorCode::storage_error, error_message::storage::batch_parameter_count_mismatch);
 
         auto bound = _bind(*statement, first_index, parameters);
         if (!bound) return bound;
@@ -33,7 +35,7 @@ Status SqlContext::execute_many(
 template <class... Values>
 Status SqlRow::read(Values&... values) const {
     if (static_cast<std::size_t>(sqlite3_column_count(statement_)) != sizeof...(Values))
-        return fail("Unexpected SQL result column count");
+        return fail(error_message::storage::unexpected_column_count);
 
     Status result;
     int index = 0;
@@ -120,4 +122,4 @@ Result<std::vector<DecodedValue<Decoder>>> SqlContext::query_all(
     return result;
 }
 
-}  // 命名空间 mailai::store_detail
+}  // namespace mailai::store_detail
